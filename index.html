@@ -32,6 +32,41 @@
             overflow-x: hidden;
         }
 
+/* --- LIGHT THEME OVERRIDES --- */
+        body.light-theme {
+            --bg-main: #f8fafc;
+            --bg-card: #ffffff;
+            --text-main: #0f172a;
+            --text-sub: #475569;
+            --accent-1: #0284c7; /* Darker blue for contrast */
+            --accent-1-hover: #0369a1;
+            --border: #cbd5e1;
+        }
+
+        .theme-toggle {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-main);
+            padding: 10px 16px;
+            border-radius: 30px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            z-index: 100;
+        }
+        body.light-theme .theme-toggle {
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+        .theme-toggle:hover {
+            transform: scale(1.05);
+            border-color: var(--accent-1);
+        }
+
         /* --- DASHBOARD UI --- */
         #dashboard {
             min-height: 100vh;
@@ -196,6 +231,7 @@
 <body>
 
     <div id="dashboard">
+        <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">☀️ Light Mode</button>
         <div class="header">
             <h1>OUTR Physics Practical Experiment Dashboard</h1>
             <p>Select an experiment below to launch the interactive digital laboratory record.</p>
@@ -322,6 +358,29 @@
             // Clear iframe memory
             iframe.srcdoc = '';
         }
+
+        // --- NEW THEME TOGGLE LOGIC ---
+        function toggleTheme() {
+            const body = document.body;
+            const btn = document.getElementById('themeBtn');
+            body.classList.toggle('light-theme');
+            
+            if (body.classList.contains('light-theme')) {
+                btn.innerHTML = '🌙 Dark Mode';
+                localStorage.setItem('dashboardTheme', 'light');
+            } else {
+                btn.innerHTML = '☀️ Light Mode';
+                localStorage.setItem('dashboardTheme', 'dark');
+            }
+        }
+
+        // Check user's saved preference when page loads
+        window.addEventListener('DOMContentLoaded', () => {
+            if (localStorage.getItem('dashboardTheme') === 'light') {
+                document.body.classList.add('light-theme');
+                document.getElementById('themeBtn').innerHTML = '🌙 Dark Mode';
+            }
+        });
     </script>
 
     <textarea id="exp1" style="display:none;">
