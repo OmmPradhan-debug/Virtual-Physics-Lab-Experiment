@@ -467,6 +467,7 @@
         td input { width: 70px; background: #fff; text-align: center; }
         
         .readonly-cell { background-color: #f8fafc; color: #64748b; font-weight: 500; }
+        .hidden-col { display: none !important; }
 
         #graph-container {
             width: 100%; height: 650px; border: 1px solid var(--border-color); border-radius: 8px; margin-bottom: 30px; overflow: hidden;
@@ -503,6 +504,12 @@
         <h2>1. Observation Table</h2>
         <div class="controls" data-html2canvas-ignore="true">
             <label>Total observations: <input type="number" id="num-obs" value="18" min="4" step="2" style="width:60px"></label>
+            <label>Input Mode: 
+                <select id="input-mode" onchange="toggleInputMode()">
+                    <option value="trials">3 Trials (t₁, t₂, t₃)</option>
+                    <option value="mean">Direct Mean Time (t)</option>
+                </select>
+            </label>
             <button onclick="generateTable1()">Generate Table</button>
         </div>
 
@@ -512,9 +519,9 @@
                     <tr>
                         <th>Hole No.</th>
                         <th>Dist from C.G. (cm)</th>
-                        <th>t₁ (sec)</th>
-                        <th>t₂ (sec)</th>
-                        <th>t₃ (sec)</th>
+                        <th class="trial-col">t₁ (sec)</th>
+                        <th class="trial-col">t₂ (sec)</th>
+                        <th class="trial-col">t₃ (sec)</th>
                         <th>Mean t (sec)</th>
                         <th>Time for 1 osc (T=t/20) sec</th>
                     </tr>
@@ -658,33 +665,76 @@
             tr.innerHTML = `
                 <td>${i + 1}</td>
                 <td class="readonly-cell">${dist}${side} (${dist} cm)</td>
-                <td><input type="number" step="0.01" id="t1-${i}" oninput="updateRow(${i})"></td>
-                <td><input type="number" step="0.01" id="t2-${i}" oninput="updateRow(${i})"></td>
-                <td><input type="number" step="0.01" id="t3-${i}" oninput="updateRow(${i})"></td>
-                <td id="mean-${i}" class="readonly-cell">-</td>
+                <td class="trial-col"><input type="number" step="0.01" id="t1-${i}" oninput="updateRow(${i})"></td>
+                <td class="trial-col"><input type="number" step="0.01" id="t2-${i}" oninput="updateRow(${i})"></td>
+                <td class="trial-col"><input type="number" step="0.01" id="t3-${i}" oninput="updateRow(${i})"></td>
+                <td><input type="number" step="0.001" id="mean-input-${i}" class="mean-input readonly-cell" readonly oninput="updateRowFromMean(${i})"></td>
                 <td id="T-${i}" class="readonly-cell">-</td>
                 <input type="hidden" id="dist-${i}" value="${dist}">
                 <input type="hidden" id="side-${i}" value="${side}">
             `;
             tbody.appendChild(tr);
         }
+        
+        toggleInputMode(); // Ensure UI honors the dropdown instantly
         updateGraphData();
     }
 
+    function toggleInputMode() {
+        const mode = document.getElementById('input-mode').value;
+        const trialCols = document.querySelectorAll('.trial-col');
+        const meanInputs = document.querySelectorAll('.mean-input');
+
+        if (mode === 'mean') {
+            trialCols.forEach(col => col.classList.add('hidden-col'));
+            meanInputs.forEach(input => {
+                input.readOnly = false;
+                input.classList.remove('readonly-cell');
+            });
+        } else {
+            trialCols.forEach(col => col.classList.remove('hidden-col'));
+            meanInputs.forEach(input => {
+                input.readOnly = true;
+                input.classList.add('readonly-cell');
+            });
+            // Recalculate based on individual trials if switching back
+            let numObs = parseInt(document.getElementById('num-obs').value);
+            for(let i=0; i<numObs; i++) updateRow(i);
+        }
+    }
+
     function updateRow(index) {
+        if (document.getElementById('input-mode').value === 'mean') return; // Do not override if in mean mode
+        
         let t1 = parseFloat(document.getElementById(`t1-${index}`).value);
         let t2 = parseFloat(document.getElementById(`t2-${index}`).value);
         let t3 = parseFloat(document.getElementById(`t3-${index}`).value);
-        let meanCell = document.getElementById(`mean-${index}`);
+        let meanInput = document.getElementById(`mean-input-${index}`);
         let TCell = document.getElementById(`T-${index}`);
 
         if (!isNaN(t1) && !isNaN(t2) && !isNaN(t3)) {
             let mean = (t1 + t2 + t3) / 3;
+            meanInput.value = mean.toFixed(3);
             let T = mean / 20;
-            meanCell.textContent = mean.toFixed(3);
             TCell.textContent = T.toFixed(4);
         } else {
-            meanCell.textContent = '-'; TCell.textContent = '-';
+            meanInput.value = '';
+            TCell.textContent = '-';
+        }
+        updateGraphData();
+    }
+
+    function updateRowFromMean(index) {
+        if (document.getElementById('input-mode').value === 'trials') return; // Do not override if in trials mode
+        
+        let mean = parseFloat(document.getElementById(`mean-input-${index}`).value);
+        let TCell = document.getElementById(`T-${index}`);
+
+        if (!isNaN(mean)) {
+            let T = mean / 20;
+            TCell.textContent = T.toFixed(4);
+        } else {
+            TCell.textContent = '-';
         }
         updateGraphData();
     }
@@ -825,7 +875,8 @@
             },
             plot_bgcolor: bg, paper_bgcolor: paperBg, shapes: [],
             legend: { font: { color: textCol } },
-            margin: { l: 60, r: 40, t: 60, b: 60 }
+            margin: { l: 60, r: 40, t: 60, b: 60 },
+            hoverlabel: { font: { color: '#ffffff' } } // Fix for point #1: Forces all hover text to be white
         };
 
         let data = [traceLeft, traceRight];
@@ -904,13 +955,20 @@
     function fillSampleData() {
         const dummyT = [ 1.63, 1.63, 1.58, 1.58, 1.53, 1.53, 1.50, 1.50, 1.52, 1.52, 1.58, 1.58, 1.72, 1.72, 1.98, 1.98, 2.50, 2.50 ];
         let numObs = parseInt(document.getElementById('num-obs').value);
+        let mode = document.getElementById('input-mode').value;
         
         for(let i=0; i < Math.min(numObs, dummyT.length); i++) {
             let base_t = dummyT[i] * 20; 
-            document.getElementById(`t1-${i}`).value = (base_t).toFixed(2);
-            document.getElementById(`t2-${i}`).value = (base_t + 0.1).toFixed(2);
-            document.getElementById(`t3-${i}`).value = (base_t - 0.1).toFixed(2);
-            updateRow(i);
+            
+            if (mode === 'trials') {
+                document.getElementById(`t1-${i}`).value = (base_t).toFixed(2);
+                document.getElementById(`t2-${i}`).value = (base_t + 0.1).toFixed(2);
+                document.getElementById(`t3-${i}`).value = (base_t - 0.1).toFixed(2);
+                updateRow(i);
+            } else {
+                document.getElementById(`mean-input-${i}`).value = (base_t).toFixed(3);
+                updateRowFromMean(i);
+            }
         }
         
         document.getElementById('t2-T1').value = "1.65";
@@ -923,6 +981,7 @@
         let numObs = document.getElementById('num-obs').value;
         let data = {
             numObs: numObs,
+            inputMode: document.getElementById('input-mode').value,
             theme: document.getElementById('graph-theme').value,
             lengthDecimals: document.getElementById('length-decimals').value,
             gStandard: document.getElementById('g-standard').value,
@@ -938,7 +997,8 @@
             data.table1.push({
                 t1: document.getElementById(`t1-${i}`) ? document.getElementById(`t1-${i}`).value : "",
                 t2: document.getElementById(`t2-${i}`) ? document.getElementById(`t2-${i}`).value : "",
-                t3: document.getElementById(`t3-${i}`) ? document.getElementById(`t3-${i}`).value : ""
+                t3: document.getElementById(`t3-${i}`) ? document.getElementById(`t3-${i}`).value : "",
+                mean: document.getElementById(`mean-input-${i}`) ? document.getElementById(`mean-input-${i}`).value : ""
             });
         }
 
@@ -961,6 +1021,7 @@
                 let data = JSON.parse(e.target.result);
                 
                 document.getElementById('num-obs').value = data.numObs || 18;
+                document.getElementById('input-mode').value = data.inputMode || 'trials';
                 document.getElementById('graph-theme').value = data.theme || 'light';
                 document.getElementById('length-decimals').value = data.lengthDecimals || '1';
                 document.getElementById('g-standard').value = data.gStandard || '980';
@@ -973,7 +1034,13 @@
                             document.getElementById(`t1-${i}`).value = row.t1;
                             document.getElementById(`t2-${i}`).value = row.t2;
                             document.getElementById(`t3-${i}`).value = row.t3;
-                            updateRow(i);
+                            document.getElementById(`mean-input-${i}`).value = row.mean || "";
+                            
+                            if (data.inputMode === 'mean') {
+                                updateRowFromMean(i);
+                            } else {
+                                updateRow(i);
+                            }
                         }
                     });
                 }
@@ -1004,32 +1071,39 @@
 
         const graphDiv = document.getElementById('graph-container');
 
+        // Capture graph image directly without rotating
         Plotly.toImage(graphDiv, {format: 'png', width: 900, height: 600, scale: 2}).then(function(dataUrl) {
             let staticImg = document.createElement('img');
             staticImg.src = dataUrl;
             staticImg.id = 'pdf-static-graph';
             
+            // Set explicitly to 90% size and center it
             staticImg.style.width = '90%'; 
             staticImg.style.height = 'auto';
             staticImg.style.display = 'block';
             staticImg.style.margin = '0 auto';
 
+            // Swap out the div graph for the static image graph
             graphDiv.style.display = 'none';
             graphDiv.parentNode.insertBefore(staticImg, graphDiv);
 
+            // Wait a fraction of a second for the DOM to update to its new height
             setTimeout(() => {
+                // Calculate exact dimensions for a custom single-page PDF
                 let widthInInches = (element.offsetWidth + 60) / 96;
                 let heightInInches = (element.offsetHeight + 100) / 96;
 
                 const opt = {
-                    margin:       [0.3, 0.3, 0.3, 0.3], 
+                    margin:       [0.3, 0.3, 0.3, 0.3], // margins in inches
                     filename:     'Bar_Pendulum_Lab_Report.pdf',
                     image:        { type: 'jpeg', quality: 0.98 },
                     html2canvas:  { scale: 2, useCORS: true, ignoreElements: (el) => el.hasAttribute('data-html2canvas-ignore') },
+                    // Set format explicitly to the size of the container to prevent page breaks
                     jsPDF:        { unit: 'in', format: [widthInInches, heightInInches], orientation: 'portrait' } 
                 };
 
                 html2pdf().set(opt).from(element).save().then(() => {
+                    // Cleanup after export
                     document.getElementById('print-standard').style.display = 'none';
                     graphDiv.style.display = 'block';
                     staticImg.remove();
@@ -1834,6 +1908,7 @@
             padding: 30px;
             border-radius: 8px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            transition: all 0.3s ease;
         }
         .action-bar {
             display: flex;
@@ -1859,7 +1934,7 @@
         .btn:hover { background-color: #004494; }
         .btn-secondary { background-color: #6c757d; }
         .btn-secondary:hover { background-color: #5a6268; }
-        .btn-success { background-color: #28a745; }
+        .btn-success { background-color: #28a745; font-weight: bold; }
         .btn-success:hover { background-color: #218838; }
         
         table {
@@ -1934,7 +2009,6 @@
         .fraction span.fdn { border-top: 1px solid black; }
         .sub-val { color: #555; font-size: 0.9em; }
 
-        /* Hide specific elements during PDF generation */
         .pdf-hide { display: block; }
     </style>
 </head>
@@ -2082,27 +2156,34 @@
     </div>
 
     <div id="final_results">
-        <h2>GRAPH:</h2>
-        <p><i>Note: The graph plots the experimental points and their best-fit straight lines. Dashed triangles show the exact points used for the slope in the calculations.</i></p>
+        <h2>AUTO-CALCULATED RESULTS (MINIMUM ERROR)</h2>
+        <p><i>Note: The graph below plots the experimental points and their best-fit straight lines. Dashed triangles show the automatically selected points that yielded the minimum error.</i></p>
         <div class="graph-container">
             <canvas id="myChart"></canvas>
         </div>
 
-        <h2>CALCULATION & ERROR MINIMIZATION:</h2>
         <div class="result-section" id="calc_text" style="background-color: #fff; border: none; padding: 0;">Fill out the tables above to see calculations.</div>
 
         <div class="pdf-hide">
             <h3>All Possible Point Pairs for Error Analysis</h3>
             <p>If these pairs were taken for calculation, the percentage error would be:</p>
             <div class="error-table-container" id="error_tables"></div>
+        </div>
 
-            <h3>Custom Selection for Calculation</h3>
-            <div class="custom-calc">
-                <p>Select two points to calculate the rigidity modulus and error manually.</p>
-                <div id="custom_selectors"></div>
-                <div id="custom_results" style="margin-top:15px; font-weight:bold;"></div>
-                <div id="custom_total_result" style="margin-top:15px; padding-top:15px; border-top: 2px solid #ffeeba; font-size: 1.1em;"></div>
+        <hr style="margin-top:40px;">
+
+        <h2>CUSTOM SELECTION RESULTS</h2>
+        <div class="custom-calc">
+            <p class="pdf-hide">Select two points to calculate the rigidity modulus and error manually.</p>
+            <div id="custom_selectors" class="pdf-hide"></div>
+            
+            <p><i>Note: The graph below plots your manually selected points. The dashed triangles represent your custom selection for calculating the slope.</i></p>
+            <div class="graph-container" id="custom_graph_container" style="display:none; background: #fffdf5;">
+                <canvas id="customChart"></canvas>
             </div>
+
+            <div id="custom_results" style="margin-top:15px;"></div>
+            <div id="custom_total_result" style="margin-top:15px; padding-top:15px; border-top: 2px solid #e0ce9a; font-size: 1.1em;"></div>
         </div>
     </div>
 
@@ -2110,6 +2191,8 @@
 
 <script>
     let chartInstance = null;
+    let customChartInstance = null;
+    let twistsDataGlobal = [[], [], []];
     let masses = [];
     let numObs = 7;
     const G_ACCEL = 980.665; 
@@ -2237,7 +2320,7 @@
         let l_vals = [L/3, L/2, 2*L/3];
         for(let s=1; s<=3; s++) { if(document.getElementById(`l_${s}`)) document.getElementById(`l_${s}`).innerText = l_vals[s-1].toFixed(2); }
 
-        let twistsData = [[], [], []];
+        twistsDataGlobal = [[], [], []];
         for(let s=1; s<=3; s++) {
             let theta0 = 0;
             for(let i=0; i<numObs; i++) {
@@ -2250,7 +2333,7 @@
                 let twist = mean - theta0; 
                 document.getElementById(`s${s}_mean_${i}`).innerText = mean.toFixed(2);
                 document.getElementById(`s${s}_twist_${i}`).innerText = twist.toFixed(2);
-                twistsData[s-1].push({x: masses[i], y: twist});
+                twistsDataGlobal[s-1].push({x: masses[i], y: twist});
             }
         }
 
@@ -2269,7 +2352,7 @@
                 <tr><th colspan="4" style="background:#e9ecef">Scale ${s} Errors</th></tr>
                 <tr><th>Points (Load kg)</th><th>&Delta;&theta;</th><th>&eta; (obs)</th><th>Error %</th></tr>`;
 
-            let scaleData = twistsData[s-1];
+            let scaleData = twistsDataGlobal[s-1];
             if(scaleData.length > 1 && exactRadius > 0 && exactCylinderD > 0) {
                 for(let i=0; i<scaleData.length-1; i++) {
                     for(let j=i+1; j<scaleData.length; j++) {
@@ -2295,10 +2378,10 @@
                 bestPairsForGraph.push({p1: best_p1, p2: best_p2});
                 
                 let d_m = masses[best_p2] - masses[best_p1];
-                let d_theta = twistsData[s-1].find(pt => pt.x === masses[best_p2]).y - twistsData[s-1].find(pt => pt.x === masses[best_p1]).y;
+                let d_theta = twistsDataGlobal[s-1].find(pt => pt.x === masses[best_p2]).y - twistsDataGlobal[s-1].find(pt => pt.x === masses[best_p1]).y;
                 
                 calcHtml += `<div class="calc-box">
-                    <h3>Scale ${s} Calculation (Using min-error points ${masses[best_p1].toFixed(1)}kg & ${masses[best_p2].toFixed(1)}kg)</h3>
+                    <h3>Scale ${s} Auto-Calculation (Using Min-Error Points ${masses[best_p1].toFixed(1)}kg & ${masses[best_p2].toFixed(1)}kg)</h3>
                     <div class="sub-val">
                         <b>Values:</b> l = ${l_i.toFixed(3)} cm, g = ${G_ACCEL} cm/s&sup2;, d = ${exactCylinderD.toFixed(4)} cm, r = ${exactRadius.toFixed(4)} cm, 
                         &Delta;m = ${d_m.toFixed(1)} kg (${(d_m*1000).toFixed(0)} g), &Delta;&theta; = ${d_theta.toFixed(2)}&deg;
@@ -2320,8 +2403,8 @@
             avgEta /= validScales;
             let finalErr = Math.abs((eta_std - avgEta)/eta_std) * 100;
             calcHtml += `<div class="result-section" style="margin-top: 20px;">
-                <p style="font-size:1.2em; color:#0056b3; margin-bottom: 10px;"><b>Average Observed Rigidity Modulus (&eta;<sub>obs</sub>) = ${avgEta.toExponential(4)} dyne/cm&sup2;</b></p>
-                <p style="font-size:1.1em; color:#d9534f;"><b>Final Percentage Error = ${finalErr.toFixed(2)} %</b></p>
+                <p style="font-size:1.2em; color:#0056b3; margin-bottom: 10px;"><b>Average Auto Rigidity Modulus (&eta;<sub>obs</sub>) = ${avgEta.toExponential(4)} dyne/cm&sup2;</b></p>
+                <p style="font-size:1.1em; color:#d9534f;"><b>Final Auto Percentage Error = ${finalErr.toFixed(2)} %</b></p>
             </div>`;
             document.getElementById('calc_text').innerHTML = calcHtml;
             document.getElementById('error_tables').innerHTML = errTablesHtml;
@@ -2330,7 +2413,7 @@
             document.getElementById('error_tables').innerHTML = "";
         }
 
-        plotGraph(twistsData, bestPairsForGraph);
+        plotGraph('myChart', twistsDataGlobal, bestPairsForGraph, chartInstance, (instance) => { chartInstance = instance; });
         calculateCustom();
     }
 
@@ -2347,16 +2430,19 @@
         return { slope: slope, intercept: intercept };
     }
 
-    function plotGraph(twistsData, bestPairs) {
-        const ctx = document.getElementById('myChart').getContext('2d');
-        if (chartInstance) chartInstance.destroy();
+    // A generic plotting function to draw either the Auto chart or Custom chart
+    function plotGraph(canvasId, twistsData, selectedPairs, instanceVar, setInstanceCallback) {
+        const ctx = document.getElementById(canvasId).getContext('2d');
+        if (instanceVar) instanceVar.destroy();
 
         let datasets = [];
         let colors = ['#FF6384', '#36A2EB', '#FFCE56'];
+        let hasData = false;
         
         for(let s=0; s<3; s++) {
             let data = twistsData[s];
-            if(data.length > 0) {
+            if(data && data.length > 0) {
+                hasData = true;
                 let lr = linearRegression(data);
                 if(lr) {
                     let minX = 0; 
@@ -2373,9 +2459,9 @@
                     });
                 }
                 
-                if (bestPairs && bestPairs[s]) {
-                    let p1 = bestPairs[s].p1;
-                    let p2 = bestPairs[s].p2;
+                if (selectedPairs && selectedPairs[s]) {
+                    let p1 = selectedPairs[s].p1;
+                    let p2 = selectedPairs[s].p2;
                     let pt1 = data.find(pt => pt.x === masses[p1]);
                     let pt2 = data.find(pt => pt.x === masses[p2]);
                     
@@ -2408,7 +2494,11 @@
             }
         }
 
-        chartInstance = new Chart(ctx, {
+        if(canvasId === 'customChart') {
+            document.getElementById('custom_graph_container').style.display = hasData ? 'block' : 'none';
+        }
+
+        let newChart = new Chart(ctx, {
             type: 'scatter',
             data: { datasets: datasets },
             options: {
@@ -2421,6 +2511,7 @@
                 plugins: { legend: { labels: { usePointStyle: true } } }
             }
         });
+        setInstanceCallback(newChart);
     }
 
     function calculateCustom() {
@@ -2431,20 +2522,30 @@
         if(exactRadius === 0 || exactCylinderD === 0) {
             document.getElementById('custom_results').innerHTML = "<p>Awaiting valid Radius and Cylinder Diameter...</p>";
             document.getElementById('custom_total_result').innerHTML = "";
+            if (customChartInstance) customChartInstance.destroy();
+            document.getElementById('custom_graph_container').style.display = 'none';
             return;
         }
 
         let html = ''; let customEtas = [];
+        let customPairsForGraph = [];
+
         for(let s=1; s<=3; s++) {
             let el_p1 = document.getElementById(`cs_${s}_p1`); let el_p2 = document.getElementById(`cs_${s}_p2`);
-            if(!el_p1 || !el_p2) continue;
+            if(!el_p1 || !el_p2) { customPairsForGraph.push(null); continue; }
             let p1 = parseInt(el_p1.value); let p2 = parseInt(el_p2.value);
-            if(p1 >= p2) { html += `<p style="color:#888;">Scale ${s}: Point 2 must be > Point 1.</p>`; continue; }
+            if(p1 >= p2) { 
+                html += `<p style="color:#888;">Scale ${s}: Point 2 must be > Point 1.</p>`; 
+                customPairsForGraph.push(null); continue; 
+            }
             
             let twist_el_1 = document.getElementById(`s${s}_twist_${p1}`); let twist_el_2 = document.getElementById(`s${s}_twist_${p2}`);
             if(!twist_el_1 || !twist_el_2 || twist_el_1.innerText === '-' || twist_el_2.innerText === '-') {
-                html += `<p style="color:#888;">Scale ${s}: Awaiting twist data.</p>`; continue;
+                html += `<p style="color:#888;">Scale ${s}: Awaiting twist data.</p>`; 
+                customPairsForGraph.push(null); continue;
             }
+
+            customPairsForGraph.push({p1: p1, p2: p2}); // Save pair for plotting
 
             let d_m = masses[p2] - masses[p1];
             let theta1 = parseFloat(twist_el_1.innerText); let theta2 = parseFloat(twist_el_2.innerText);
@@ -2454,8 +2555,24 @@
                 let eta_obs = (360 / (PI*PI)) * ((l_vals[s-1] * G_ACCEL * exactCylinderD) / Math.pow(exactRadius, 4)) * ((d_m * 1000) / d_theta);
                 let err = Math.abs((eta_std - eta_obs) / eta_std) * 100;
                 customEtas.push(eta_obs);
-                html += `<p style="color:#0056b3; margin:5px 0;">Scale ${s} (${masses[p1].toFixed(1)}kg to ${masses[p2].toFixed(1)}kg): <b>&eta; = ${eta_obs.toExponential(4)} dyne/cm&sup2;</b> | Error = <b>${err.toFixed(2)}%</b></p>`;
-            } else { html += `<p style="color:#888;">Scale ${s}: Invalid twist difference.</p>`; }
+                
+                html += `<div class="calc-box" style="background: #fffdf5; border-color: #ffeeba;">
+                    <h3>Scale ${s} Custom Calculation (Points ${masses[p1].toFixed(1)}kg & ${masses[p2].toFixed(1)}kg)</h3>
+                    <div class="sub-val">
+                        <b>Values:</b> l = ${l_vals[s-1].toFixed(3)} cm, g = ${G_ACCEL} cm/s&sup2;, d = ${exactCylinderD.toFixed(4)} cm, r = ${exactRadius.toFixed(4)} cm, 
+                        &Delta;m = ${d_m.toFixed(1)} kg (${(d_m*1000).toFixed(0)} g), &Delta;&theta; = ${d_theta.toFixed(2)}&deg;
+                    </div>
+                    <div class="formula" style="margin: 15px 0;">
+                        &eta;<sub>${s}</sub> = 
+                        <div class="fraction"><span>360</span><span class="fdn">${PI.toFixed(4)}&sup2;</span></div> &times;
+                        <div class="fraction"><span>${l_vals[s-1].toFixed(2)} &times; ${G_ACCEL} &times; ${exactCylinderD.toFixed(4)}</span><span class="fdn">(${exactRadius.toFixed(4)})&#8308;</span></div> &times;
+                        <div class="fraction"><span>${(d_m*1000).toFixed(0)}</span><span class="fdn">${d_theta.toFixed(2)}</span></div>
+                    </div>
+                    <p style="color:#0056b3;"><b>&eta;<sub>${s}</sub> = ${eta_obs.toExponential(4)} dyne/cm&sup2;</b> (Error: ${err.toFixed(2)}%)</p>
+                </div>`;
+            } else { 
+                html += `<p style="color:#888;">Scale ${s}: Invalid twist difference.</p>`; 
+            }
         }
         document.getElementById('custom_results').innerHTML = html;
 
@@ -2463,17 +2580,25 @@
             let avgCustomEta = customEtas.reduce((a, b) => a + b, 0) / customEtas.length;
             let totalErr = Math.abs((eta_std - avgCustomEta) / eta_std) * 100;
             document.getElementById('custom_total_result').innerHTML = `
-                <span style="color:#0056b3;">Average Custom &eta;<sub>obs</sub> = ${avgCustomEta.toExponential(4)} dyne/cm&sup2;</span><br>
-                <span style="color:#d9534f; font-weight:bold;">Total Custom Error = ${totalErr.toFixed(2)} %</span>`;
+                <span style="color:#0056b3;"><b>Average Custom Rigidity Modulus (&eta;<sub>obs</sub>) = ${avgCustomEta.toExponential(4)} dyne/cm&sup2;</b></span><br>
+                <span style="color:#d9534f; font-weight:bold;">Final Custom Percentage Error = ${totalErr.toFixed(2)} %</span>`;
         } else {
             document.getElementById('custom_total_result').innerHTML = "";
         }
+
+        // Plot the second graph using the user's manual selections
+        plotGraph('customChart', twistsDataGlobal, customPairsForGraph, customChartInstance, (instance) => { customChartInstance = instance; });
     }
+
+    // --- DATA IMPORT/EXPORT & SAMPLE DATA & PDF ---
 
     function getExportableData() {
         let data = {};
         document.querySelectorAll('input[type="number"]').forEach(input => {
             data[input.id] = input.value;
+        });
+        document.querySelectorAll('select').forEach(select => {
+            data[select.id] = select.value;
         });
         return data;
     }
@@ -2544,36 +2669,44 @@
     }
 
     function exportPDF() {
-        // Hide elements we don't want in the printed PDF
+        // 1. Hide UI elements
         document.querySelectorAll('.pdf-hide').forEach(el => el.style.display = 'none');
         
         const element = document.getElementById('report_container');
         
-        // Calculate the exact pixel height and width of the container AFTER hiding buttons
-        const width = element.clientWidth;
-        const height = element.clientHeight;
-        
-        const opt = {
-            margin:       20, // 20px padding around the borders
-            filename:     'Rigidity_Modulus_Lab_Report.pdf',
-            image:        { type: 'jpeg', quality: 0.98 },
-            html2canvas:  { scale: 2, useCORS: true, scrollY: 0 },
-            // Setting custom format dynamically: [width, height] inside a single page
-            jsPDF:        { unit: 'px', format: [width + 40, height + 40], orientation: 'portrait' }
-        };
+        // 2. Force desktop width so mobile doesn't generate a skinny, tall PDF
+        const originalWidth = element.style.width;
+        const originalMaxWidth = element.style.maxWidth;
+        element.style.width = '1150px';
+        element.style.maxWidth = '1150px';
 
-        html2pdf().set(opt).from(element).save().then(() => {
-            // Restore UI elements after PDF is done generating
-            document.querySelectorAll('.pdf-hide').forEach(el => el.style.display = '');
-        });
+        // 3. Give the DOM a tiny moment to reflow before calculating height
+        setTimeout(() => {
+            const width = element.scrollWidth;
+            const height = element.scrollHeight;
+            
+            const opt = {
+                margin:       20,
+                filename:     'Rigidity_Modulus_Lab_Report.pdf',
+                image:        { type: 'jpeg', quality: 0.98 },
+                // windowWidth fixes Canvas rendering issues on forced resizes
+                html2canvas:  { scale: 2, useCORS: true, scrollY: 0, windowWidth: 1150 }, 
+                jsPDF:        { unit: 'px', format: [width + 40, height + 40], orientation: 'portrait' }
+            };
+
+            html2pdf().set(opt).from(element).save().then(() => {
+                // 4. Restore everything
+                document.querySelectorAll('.pdf-hide').forEach(el => el.style.display = '');
+                element.style.width = originalWidth;
+                element.style.maxWidth = originalMaxWidth;
+            });
+        }, 100);
     }
 
-    // Initialize
     window.onload = function() { generateScaleTables(); };
 </script>
 </body>
-</html>
-    </textarea>
+</html>    </textarea>
 <textarea id="exp4" style="display:none;">
 <!DOCTYPE html>
 <html lang="en">
@@ -3599,88 +3732,90 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Sonometer Experiment Lab Record</title>
+    
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
     <style>
+        :root {
+            --bg-color: #f4f7f6;
+            --container-bg: #fff;
+            --text-color: #333;
+            --heading-color: #2c3e50;
+            --table-header: #f8f9fa;
+            --border-color: #ccc;
+            --input-bg: #fff;
+            --input-text: #333;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg-color: #1a1a1a;
+                --container-bg: #2d2d2d;
+                --text-color: #e0e0e0;
+                --heading-color: #ffffff;
+                --table-header: #404040;
+                --border-color: #555;
+                --input-bg: #333;
+                --input-text: #fff;
+            }
+        }
+
         body {
-            font-family: "Times New Roman", Times, serif; /* Better for formal lab reports */
-            margin: 20px auto;
+            font-family: "Times New Roman", Times, serif;
+            margin: 15px auto;
             max-width: 900px;
-            background-color: #f4f7f6;
-            color: #333;
+            background-color: var(--bg-color);
+            color: var(--text-color);
             line-height: 1.6;
             font-size: 16px;
+            padding: 0 10px; 
+            overflow-x: hidden;
         }
-        h1, h2, h3 { color: #2c3e50; }
-        h1 { text-align: center; text-transform: uppercase; margin-bottom: 30px;}
-        h3 { margin-top: 30px; border-bottom: 2px solid #ccc; padding-bottom: 5px; }
 
-        /* Dark theme support for main body */
-        @media (prefers-color-scheme: dark) {
-            body { background-color: #1a1a1a; color: #e0e0e0; }
-            .container, .graph-container, .document-section { background-color: #2d2d2d; color: #e0e0e0; box-shadow: 0 4px 8px rgba(0,0,0,0.3); }
-            h1, h2, h3 { color: #ffffff; border-color: #555;}
-            th { background-color: #404040; color: #ffffff; }
-            input, .editable-text { background-color: #333; color: #fff; border-color: #555; }
-        }
+        h1, h2, h3 { color: var(--heading-color); }
+        h1 { text-align: center; text-transform: uppercase; margin-bottom: 20px; font-size: 1.5em; }
+        h3 { margin-top: 25px; border-bottom: 2px solid var(--border-color); padding-bottom: 5px; font-size: 1.2em; }
 
         .document-section {
-            background: #fff;
-            padding: 25px 40px;
+            background: var(--container-bg);
+            padding: 30px 40px;
             margin-bottom: 20px;
             border-radius: 8px;
             box-shadow: 0 4px 8px rgba(0,0,0,0.1);
         }
 
-        .action-bar {
+        /* Controls UI */
+        .action-bar, .controls {
             background: #34495e;
             padding: 15px;
             border-radius: 8px;
             display: flex;
             justify-content: center;
-            gap: 15px;
-            margin-bottom: 25px;
-            flex-wrap: wrap;
-            font-family: Arial, sans-serif;
-        }
-        .controls {
-            margin-bottom: 15px;
-            padding: 10px;
-            background: #e9ecef;
-            border-radius: 5px;
-            display: flex;
-            gap: 15px;
-            align-items: center;
-            flex-wrap: wrap;
-            font-family: Arial, sans-serif;
-        }
-        @media (prefers-color-scheme: dark) { .controls { background-color: #404040; } }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
+            gap: 10px;
             margin-bottom: 20px;
+            flex-wrap: wrap;
             font-family: Arial, sans-serif;
         }
-        th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
-        th { background-color: #f8f9fa; }
+        .controls { background: var(--table-header); justify-content: flex-start; }
+
+        .table-responsive { width: 100%; overflow-x: auto; margin-bottom: 20px; }
+
+        table { width: 100%; min-width: 600px; border-collapse: collapse; font-family: Arial, sans-serif; font-size: 14px; }
+        th, td { border: 1px solid var(--border-color); padding: 8px; text-align: center; word-wrap: break-word; }
+        th { background-color: var(--table-header); }
         
         input[type="number"], input[type="text"] {
-            width: 80px; padding: 5px; text-align: center; border: 1px solid #bdc3c7; border-radius: 3px; font-family: inherit; font-size: inherit;
+            width: 70px; padding: 5px; text-align: center; border: 1px solid var(--border-color); border-radius: 3px; font-family: inherit; font-size: inherit; background: var(--input-bg); color: var(--input-text);
         }
         
-        .editable-text {
-            border: 1px dashed #bdc3c7;
-            padding: 10px;
-            border-radius: 5px;
-            min-height: 50px;
-        }
+        .editable-text { border: 1px dashed var(--border-color); padding: 10px; border-radius: 5px; min-height: 50px; }
         .editable-text:focus { outline: none; border-color: #3498db; background-color: rgba(52, 152, 219, 0.05); }
 
-        .btn {
-            background-color: #3498db; color: white; padding: 10px 15px; border: none; border-radius: 5px; cursor: pointer; font-size: 15px; font-weight: bold; transition: 0.3s;
-        }
+        /* Buttons */
+        .btn { background-color: #3498db; color: white; padding: 10px 12px; border: none; border-radius: 5px; cursor: pointer; font-size: 14px; font-weight: bold; transition: 0.3s; flex: 1 1 auto; text-align: center; min-width: 120px; }
         .btn:hover { background-color: #2980b9; }
         .btn-action { background-color: #1abc9c; }
         .btn-action:hover { background-color: #16a085; }
@@ -3688,46 +3823,55 @@
         .btn-pdf:hover { background-color: #8e44ad; }
         .btn-manipulate { background-color: #e74c3c; margin-top: 10px; }
         .btn-manipulate:hover { background-color: #c0392b; }
-        .btn-restore { background-color: #f39c12; margin-top: 10px; margin-left: 10px; }
+        .btn-restore { background-color: #f39c12; margin-top: 10px; }
         .btn-restore:hover { background-color: #d68910; }
 
         .graphs { display: flex; flex-direction: column; gap: 30px; margin-top: 20px; }
-        .graph-container { background: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); width: 100%; box-sizing: border-box; }
-
-        .formula { font-style: italic; font-weight: bold; font-family: "Courier New", Courier, monospace; text-align: center; margin: 15px 0;}
-
-        /* 🖨️ PRINT / PDF CSS: Transforms app into a clean A4 Lab Record */
-        @media print {
-            body { background-color: #fff !important; color: #000 !important; margin: 0; padding: 0; max-width: 100%; font-size: 14pt; }
-            .document-section, .graph-container { box-shadow: none; border: none; padding: 0; margin-bottom: 20px; background-color: #fff !important; color: #000 !important;}
-            h1, h2, h3, p, li { color: #000 !important; border-color: #000 !important; }
-            .action-bar, .controls, button, .no-print { display: none !important; }
-            
-            /* Clean up inputs and editables for print */
-            input { border: none !important; background: transparent !important; pointer-events: none; text-align: center; color: #000 !important; font-weight: bold;}
-            .editable-text { border: none !important; padding: 0; background: transparent !important; }
-            
-            table { width: 100%; color: #000 !important; }
-            th { background-color: #eaeaea !important; color: #000 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-            td { color: #000 !important; }
-            
-            .graphs { display: block; }
-            .graph-container { width: 100%; max-width: 800px; margin: 0 auto 30px auto; page-break-inside: avoid; }
-            .document-section { page-break-inside: avoid; }
+        .graph-container { 
+            background: var(--container-bg); 
+            padding: 15px; 
+            border-radius: 8px; 
+            border: 1px solid var(--border-color);
+            width: 100%; 
+            box-sizing: border-box;
+            position: relative;
+            height: 400px; 
         }
+
+        .formula { font-style: italic; font-weight: bold; font-family: "Courier New", Courier, monospace; text-align: center; margin: 15px 0; font-size: 1.1em;}
+
+        /* PDF Export Styling - Just hides buttons and cleans up borders */
+        .export-mode .no-print { display: none !important; }
+        .export-mode .editable-text { border: none !important; padding: 0 !important; }
+        .export-mode .document-section { box-shadow: none !important; padding: 10px !important; }
+        .export-mode .table-responsive { overflow: visible !important; }
+        
+        /* The magic classes that stop tables and graphs from splitting across pages */
+        .avoid-break { page-break-inside: avoid; break-inside: avoid; }
+
+        /* Loader */
+        #loader { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); color: white; font-size: 20px; font-family: Arial; justify-content: center; align-items: center; z-index: 9999; flex-direction: column; gap: 15px; text-align: center;}
+        .spinner { border: 6px solid #f3f3f3; border-top: 6px solid #3498db; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
     </style>
 </head>
 <body>
 
-    <div class="action-bar no-print">
-        <button class="btn btn-action" onclick="generateSampleData()">📝 Generate Sample Data</button>
-        <button class="btn btn-action" onclick="exportData()">💾 Export Data</button>
-        <button class="btn btn-action" onclick="document.getElementById('fileInput').click()">📂 Import Data</button>
-        <input type="file" id="fileInput" accept=".json" style="display: none;" onchange="importData(event)">
-        <button class="btn btn-pdf" onclick="exportPDF()">📄 Export to PDF</button>
+    <div id="loader">
+        <div class="spinner"></div>
+        <div>Generating PDF...<br><span style="font-size: 14px; color: #ccc;">Please wait a moment.</span></div>
     </div>
 
-    <div class="document-section">
+    <div class="action-bar no-print">
+        <button class="btn btn-action" onclick="generateSampleData()">📝 Sample Data</button>
+        <button class="btn btn-action" onclick="exportData()">💾 Export JSON</button>
+        <button class="btn btn-action" onclick="document.getElementById('fileInput').click()">📂 Import JSON</button>
+        <input type="file" id="fileInput" accept=".json" style="display: none;" onchange="importData(event)">
+        <button class="btn btn-pdf" onclick="exportPDF()" style="background-color: #e74c3c;">📄 Export to PDF</button>
+    </div>
+
+    <div id="export-container" class="document-section">
         <h1>Physics Practical Record</h1>
 
         <h3>AIM OF THE EXPERIMENT:</h3>
@@ -3754,80 +3898,84 @@
             <li><strong>Law of Tension:</strong> n &prop; &radic;T when l and m are constant.</li>
         </ol>
 
-        <h3>OBSERVATION:</h3>
-        <p><strong>Table-1: Verifying Law of Length (Constant Tension)</strong></p>
+        <h3 class="avoid-break">OBSERVATION:</h3>
+        <p class="avoid-break"><strong>Table-1: Verifying Law of Length (Constant Tension)</strong></p>
         <div class="controls no-print">
-            <label>Constant Weight (w) in kg: <input type="number" id="t1-weight" value="2.0" step="0.1"></label>
-            <label>Number of Observations: <input type="number" id="t1-rows" value="3" min="1"></label>
-            <button class="btn" onclick="generateTable1()">Update Rows</button>
+            <label>Weight (kg): <input type="number" id="t1-weight" value="2.0" step="0.1" style="width: 50px;"></label>
+            <label>Obs: <input type="number" id="t1-rows" value="3" min="1" style="width: 40px;"></label>
+            <button class="btn" style="min-width: 80px; padding: 5px;" onclick="generateTable1()">Update</button>
         </div>
-        <table id="table1">
-            <thead>
-                <tr>
-                    <th rowspan="2">No. of Obs.</th>
-                    <th rowspan="2">Frequency 'n' (Hz)</th>
-                    <th colspan="2">Distance between wedges 'l' (cm)</th>
-                    <th rowspan="2">Mean 'l' (cm)</th>
-                    <th rowspan="2">1/l (cm⁻¹)</th>
-                    <th rowspan="2">n × l</th>
-                </tr>
-                <tr>
-                    <th>Increasing</th>
-                    <th>Decreasing</th>
-                </tr>
-            </thead>
-            <tbody>
-                </tbody>
-        </table>
+        
+        <div class="table-responsive avoid-break">
+            <table id="table1">
+                <thead>
+                    <tr>
+                        <th rowspan="2">No.</th>
+                        <th rowspan="2">Freq 'n' (Hz)</th>
+                        <th colspan="2">Length 'l' (cm)</th>
+                        <th rowspan="2">Mean 'l'</th>
+                        <th rowspan="2">1/l (cm⁻¹)</th>
+                        <th rowspan="2">n × l</th>
+                    </tr>
+                    <tr>
+                        <th>Inc.</th>
+                        <th>Dec.</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
 
-        <p><strong>Table-2: Verifying Law of Tension (Constant Frequency)</strong></p>
+        <p class="avoid-break" style="margin-top: 20px;"><strong>Table-2: Verifying Law of Tension (Constant Frequency)</strong></p>
         <div class="controls no-print">
-            <label>Constant Frequency (n) in Hz: <input type="number" id="t2-freq" value="256"></label>
-            <label>Number of Observations: <input type="number" id="t2-rows" value="3" min="1"></label>
-            <button class="btn" onclick="generateTable2()">Update Rows</button>
-        </div>
-        <table id="table2">
-            <thead>
-                <tr>
-                    <th rowspan="2">No. of Obs.</th>
-                    <th rowspan="2">Tension (in Newton)</th>
-                    <th colspan="2">Resonance Length 'l' (cm)</th>
-                    <th rowspan="2">Mean length 'l' (cm)</th>
-                    <th rowspan="2">l² (cm²)</th>
-                    <th rowspan="2">T/l² (kg/cm²)</th>
-                </tr>
-                <tr>
-                    <th>Increasing</th>
-                    <th>Decreasing</th>
-                </tr>
-            </thead>
-            <tbody>
-                </tbody>
-        </table>
-
-        <div style="text-align: center;" class="no-print">
-            <button class="btn" style="font-size: 18px; padding: 15px 30px;" onclick="calculateAndGraph()">⚙️ Calculate & Plot Graphs</button>
-            <br>
-            <button class="btn btn-manipulate" onclick="manipulateData()">🤫 Manipulate Data (Improve Graphs)</button>
-            <button class="btn btn-restore" onclick="restoreData()">↩️ Restore Original Data</button>
+            <label>Freq (Hz): <input type="number" id="t2-freq" value="256" style="width: 60px;"></label>
+            <label>Obs: <input type="number" id="t2-rows" value="3" min="1" style="width: 40px;"></label>
+            <button class="btn" style="min-width: 80px; padding: 5px;" onclick="generateTable2()">Update</button>
         </div>
 
-        <h3>GRAPHS:</h3>
+        <div class="table-responsive avoid-break">
+            <table id="table2">
+                <thead>
+                    <tr>
+                        <th rowspan="2">No.</th>
+                        <th rowspan="2">Tension (N)</th>
+                        <th colspan="2">Length 'l' (cm)</th>
+                        <th rowspan="2">Mean 'l'</th>
+                        <th rowspan="2">l² (cm²)</th>
+                        <th rowspan="2">T/l²</th>
+                    </tr>
+                    <tr>
+                        <th>Inc.</th>
+                        <th>Dec.</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+
+        <div style="text-align: center; display: flex; flex-direction: column; gap: 10px; align-items: center; margin-top: 20px;" class="no-print">
+            <button class="btn" style="font-size: 16px; padding: 12px 20px; width: 100%; max-width: 300px;" onclick="calculateAndGraph()">⚙️ Calculate & Plot Graphs</button>
+            <div style="display: flex; gap: 10px; justify-content: center; width: 100%; flex-wrap: wrap;">
+                <button class="btn btn-manipulate" onclick="manipulateData()">🤫 Manipulate Data</button>
+                <button class="btn btn-restore" onclick="restoreData()">↩️ Restore Original</button>
+            </div>
+        </div>
+
+        <h3 class="avoid-break">GRAPHS:</h3>
         <div class="graphs">
-            <div class="graph-container">
+            <div class="graph-container avoid-break" id="gc1">
                 <canvas id="graph1"></canvas>
             </div>
-            <div class="graph-container">
+            <div class="graph-container avoid-break" id="gc2">
                 <canvas id="graph2"></canvas>
             </div>
         </div>
 
-        <h3>CONCLUSION:</h3>
-        <div class="editable-text" contenteditable="true">
+        <h3 class="avoid-break">CONCLUSION:</h3>
+        <div class="editable-text avoid-break" contenteditable="true">
             1. The graph plotted between frequency (n) and reciprocal of length (1/l) is a straight line passing through the origin. This verifies the law of length of transverse vibration of strings.<br><br>
             2. The graph plotted between tension (T) and square of length (l²) is a straight line passing through the origin. This verifies the law of tension of transverse vibration of strings.
         </div>
-        <p class="no-print" style="font-size: 12px; color: #7f8c8d; text-align: center;">* You can click and edit the conclusion text above before printing.</p>
 
     </div>
 
@@ -3837,14 +3985,8 @@
         let originalDataT2 = [];
 
         function evaluateTension(str) {
-            try {
-                let cleaned = str.replace(/x/i, '*').trim();
-                if(cleaned.includes('*')) {
-                    let parts = cleaned.split('*');
-                    return parseFloat(parts[0]) * parseFloat(parts[1]);
-                }
-                return parseFloat(cleaned);
-            } catch(e) { return 0; }
+            try { return parseFloat(str.replace(/x/i, '*').split('*').reduce((a, b) => parseFloat(a) * parseFloat(b))); } 
+            catch { return 0; }
         }
 
         function generateTable1() {
@@ -3852,17 +3994,13 @@
             const tbody = document.querySelector('#table1 tbody');
             tbody.innerHTML = '';
             for (let i = 1; i <= rowsCount; i++) {
-                tbody.innerHTML += `
-                    <tr>
-                        <td>${i}</td>
-                        <td><input type="number" class="t1-n" placeholder="e.g. 256"></td>
-                        <td><input type="number" step="0.1" class="t1-inc"></td>
-                        <td><input type="number" step="0.1" class="t1-dec"></td>
-                        <td class="t1-mean">-</td>
-                        <td class="t1-inv">-</td>
-                        <td class="t1-nl">-</td>
-                    </tr>
-                `;
+                tbody.innerHTML += `<tr>
+                    <td>${i}</td>
+                    <td><input type="number" class="t1-n"></td>
+                    <td><input type="number" step="0.1" class="t1-inc"></td>
+                    <td><input type="number" step="0.1" class="t1-dec"></td>
+                    <td class="t1-mean">-</td><td class="t1-inv">-</td><td class="t1-nl">-</td>
+                </tr>`;
             }
             originalDataT1 = []; 
         }
@@ -3874,55 +4012,39 @@
             let defaultTensions = ["2.5 * 9.8", "3.0 * 9.8", "3.5 * 9.8", "4.0 * 9.8", "4.5 * 9.8"];
             for (let i = 1; i <= rowsCount; i++) {
                 let defaultT = defaultTensions[i-1] || `${(2.0 + (i*0.5)).toFixed(1)} * 9.8`;
-                tbody.innerHTML += `
-                    <tr>
-                        <td>${i}</td>
-                        <td><input type="text" class="t2-T" value="${defaultT}"></td>
-                        <td><input type="number" step="0.1" class="t2-inc"></td>
-                        <td><input type="number" step="0.1" class="t2-dec"></td>
-                        <td class="t2-mean">-</td>
-                        <td class="t2-l2">-</td>
-                        <td class="t2-T_l2">-</td>
-                    </tr>
-                `;
+                tbody.innerHTML += `<tr>
+                    <td>${i}</td>
+                    <td><input type="text" class="t2-T" value="${defaultT}"></td>
+                    <td><input type="number" step="0.1" class="t2-inc"></td>
+                    <td><input type="number" step="0.1" class="t2-dec"></td>
+                    <td class="t2-mean">-</td><td class="t2-l2">-</td><td class="t2-T_l2">-</td>
+                </tr>`;
             }
             originalDataT2 = [];
         }
 
         function calculateAndGraph() {
-            let dataG1 = [{x: 0, y: 0}];
-            let dataG2 = [{x: 0, y: 0}];
+            let dataG1 = [{x: 0, y: 0}], dataG2 = [{x: 0, y: 0}];
 
-            const t1Rows = document.querySelectorAll('#table1 tbody tr');
-            t1Rows.forEach(row => {
-                let n = parseFloat(row.querySelector('.t1-n').value);
-                let inc = parseFloat(row.querySelector('.t1-inc').value);
-                let dec = parseFloat(row.querySelector('.t1-dec').value);
+            document.querySelectorAll('#table1 tbody tr').forEach(row => {
+                let n = parseFloat(row.querySelector('.t1-n').value), inc = parseFloat(row.querySelector('.t1-inc').value), dec = parseFloat(row.querySelector('.t1-dec').value);
                 if (n && inc && dec) {
                     let mean = (inc + dec) / 2;
-                    let invL = 1 / mean;
-                    let nl = n * mean;
                     row.querySelector('.t1-mean').innerText = mean.toFixed(2);
-                    row.querySelector('.t1-inv').innerText = invL.toFixed(4);
-                    row.querySelector('.t1-nl').innerText = nl.toFixed(2);
-                    dataG1.push({x: n, y: invL});
+                    row.querySelector('.t1-inv').innerText = (1 / mean).toFixed(4);
+                    row.querySelector('.t1-nl').innerText = (n * mean).toFixed(2);
+                    dataG1.push({x: n, y: 1/mean});
                 }
             });
 
-            const t2Rows = document.querySelectorAll('#table2 tbody tr');
-            t2Rows.forEach(row => {
-                let tStr = row.querySelector('.t2-T').value;
-                let T = evaluateTension(tStr);
-                let inc = parseFloat(row.querySelector('.t2-inc').value);
-                let dec = parseFloat(row.querySelector('.t2-dec').value);
+            document.querySelectorAll('#table2 tbody tr').forEach(row => {
+                let T = evaluateTension(row.querySelector('.t2-T').value), inc = parseFloat(row.querySelector('.t2-inc').value), dec = parseFloat(row.querySelector('.t2-dec').value);
                 if (T && inc && dec) {
                     let mean = (inc + dec) / 2;
-                    let l2 = mean * mean;
-                    let t_l2 = T / l2;
                     row.querySelector('.t2-mean').innerText = mean.toFixed(2);
-                    row.querySelector('.t2-l2').innerText = l2.toFixed(2);
-                    row.querySelector('.t2-T_l2').innerText = t_l2.toFixed(4);
-                    dataG2.push({x: T, y: l2});
+                    row.querySelector('.t2-l2').innerText = (mean * mean).toFixed(2);
+                    row.querySelector('.t2-T_l2').innerText = (T / (mean * mean)).toFixed(4);
+                    dataG2.push({x: T, y: mean * mean});
                 }
             });
 
@@ -3930,276 +4052,187 @@
         }
 
         function drawGraphs(data1, data2) {
-            data1.sort((a, b) => a.x - b.x);
-            data2.sort((a, b) => a.x - b.x);
+            data1.sort((a, b) => a.x - b.x); data2.sort((a, b) => a.x - b.x);
+            if(chart1) chart1.destroy(); if(chart2) chart2.destroy();
 
-            if(chart1) chart1.destroy();
-            if(chart2) chart2.destroy();
-
-            const commonOptions = { animation: false, plugins: { legend: { display: false } } };
-
-            // In print media, Chart.js automatically uses standard colors, but we set explicit colors just in case.
+            const commonOptions = { 
+                animation: false, 
+                maintainAspectRatio: false, 
+                responsive: true,
+                plugins: { legend: { display: false } } 
+            };
+            
             const isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
             const textColor = isDark ? '#ffffff' : '#000000';
             const gridColor = isDark ? 'rgba(255, 255, 255, 0.2)' : 'rgba(0, 0, 0, 0.1)';
+            const primaryColor = '#3498db';
+            const secondaryColor = '#e74c3c';
 
-            const ctx1 = document.getElementById('graph1').getContext('2d');
-            chart1 = new Chart(ctx1, {
+            chart1 = new Chart(document.getElementById('graph1').getContext('2d'), {
                 type: 'scatter',
-                data: {
-                    datasets: [{
-                        label: 'Law of Length',
-                        data: data1,
-                        borderColor: '#0055ff', backgroundColor: '#0055ff',
-                        borderWidth: 3, showLine: true, tension: 0, pointRadius: 7, pointHoverRadius: 9
-                    }]
-                },
+                data: { datasets: [{ data: data1, borderColor: primaryColor, backgroundColor: primaryColor, borderWidth: 2, showLine: true, tension: 0, pointRadius: 5 }] },
                 options: {
                     ...commonOptions,
                     scales: {
-                        x: { beginAtZero: true, title: { display: true, text: 'Frequency n (Hz)', color: textColor, font: {weight: 'bold', size: 16} }, ticks: { color: textColor, font: {weight: 'bold', size: 14} }, grid: { color: gridColor } },
-                        y: { beginAtZero: true, title: { display: true, text: '1/l (cm⁻¹)', color: textColor, font: {weight: 'bold', size: 16} }, ticks: { color: textColor, font: {weight: 'bold', size: 14} }, grid: { color: gridColor } }
+                        x: { beginAtZero: true, title: { display: true, text: 'Frequency n (Hz)', color: textColor, font: {weight: 'bold'} }, ticks: { color: textColor }, grid: { color: gridColor } },
+                        y: { beginAtZero: true, title: { display: true, text: '1/l (cm⁻¹)', color: textColor, font: {weight: 'bold'} }, ticks: { color: textColor }, grid: { color: gridColor } }
                     },
-                    plugins: { title: { display: true, text: 'Graph 1: Verifying Law of Length (n vs 1/l)', position: 'top', color: textColor, font: {size: 18, weight: 'bold'} } }
+                    plugins: { title: { display: true, text: 'Graph 1: Verifying Law of Length', color: textColor, font: {size: 16, weight: 'bold'} } }
                 }
             });
 
-            const ctx2 = document.getElementById('graph2').getContext('2d');
-            chart2 = new Chart(ctx2, {
+            chart2 = new Chart(document.getElementById('graph2').getContext('2d'), {
                 type: 'scatter',
-                data: {
-                    datasets: [{
-                        label: 'Law of Tension',
-                        data: data2,
-                        borderColor: '#e60000', backgroundColor: '#e60000',
-                        borderWidth: 3, showLine: true, tension: 0, pointRadius: 7, pointHoverRadius: 9
-                    }]
-                },
+                data: { datasets: [{ data: data2, borderColor: secondaryColor, backgroundColor: secondaryColor, borderWidth: 2, showLine: true, tension: 0, pointRadius: 5 }] },
                 options: {
                     ...commonOptions,
                     scales: {
-                        x: { beginAtZero: true, title: { display: true, text: 'Tension T (Newton)', color: textColor, font: {weight: 'bold', size: 16} }, ticks: { color: textColor, font: {weight: 'bold', size: 14} }, grid: { color: gridColor } },
-                        y: { beginAtZero: true, title: { display: true, text: 'l² (cm²)', color: textColor, font: {weight: 'bold', size: 16} }, ticks: { color: textColor, font: {weight: 'bold', size: 14} }, grid: { color: gridColor } }
+                        x: { beginAtZero: true, title: { display: true, text: 'Tension T (Newton)', color: textColor, font: {weight: 'bold'} }, ticks: { color: textColor }, grid: { color: gridColor } },
+                        y: { beginAtZero: true, title: { display: true, text: 'l² (cm²)', color: textColor, font: {weight: 'bold'} }, ticks: { color: textColor }, grid: { color: gridColor } }
                     },
-                    plugins: { title: { display: true, text: 'Graph 2: Verifying Law of Tension (T vs l²)', position: 'top', color: textColor, font: {size: 18, weight: 'bold'} } }
+                    plugins: { title: { display: true, text: 'Graph 2: Verifying Law of Tension', color: textColor, font: {size: 16, weight: 'bold'} } }
                 }
             });
         }
 
+        // --- Data Tools ---
         function manipulateData() {
-            const t1Rows = document.querySelectorAll('#table1 tbody tr');
-            const t2Rows = document.querySelectorAll('#table2 tbody tr');
-            
+            const t1Rows = document.querySelectorAll('#table1 tbody tr'), t2Rows = document.querySelectorAll('#table2 tbody tr');
             if (originalDataT1.length === 0 && originalDataT2.length === 0) {
-                t1Rows.forEach(row => { originalDataT1.push({ inc: row.querySelector('.t1-inc').value, dec: row.querySelector('.t1-dec').value }); });
-                t2Rows.forEach(row => { originalDataT2.push({ inc: row.querySelector('.t2-inc').value, dec: row.querySelector('.t2-dec').value }); });
+                t1Rows.forEach(row => originalDataT1.push({ inc: row.querySelector('.t1-inc').value, dec: row.querySelector('.t1-dec').value }));
+                t2Rows.forEach(row => originalDataT2.push({ inc: row.querySelector('.t2-inc').value, dec: row.querySelector('.t2-dec').value }));
             }
-
-            let constant1 = 0;
-            for(let row of t1Rows) {
-                let n = parseFloat(row.querySelector('.t1-n').value);
-                let inc = parseFloat(row.querySelector('.t1-inc').value);
-                let dec = parseFloat(row.querySelector('.t1-dec').value);
-                if(n && inc && dec) { constant1 = n * ((inc + dec) / 2); break; }
-            }
-
-            if(constant1 > 0) {
-                t1Rows.forEach(row => {
-                    let n = parseFloat(row.querySelector('.t1-n').value);
-                    if(n) {
-                        let idealL = constant1 / n;
-                        let meanNoise = (Math.random() * 0.1) - 0.05; 
-                        let targetMean = idealL + meanNoise;
-                        let realisticDifference = (Math.random() * 0.2) + 0.1; 
-                        row.querySelector('.t1-inc').value = (targetMean - realisticDifference / 2).toFixed(1);
-                        row.querySelector('.t1-dec').value = (targetMean + realisticDifference / 2).toFixed(1);
-                    }
-                });
-            }
-
-            let constant2 = 0;
-            for(let row of t2Rows) {
-                let tStr = row.querySelector('.t2-T').value;
-                let T = evaluateTension(tStr);
-                let inc = parseFloat(row.querySelector('.t2-inc').value);
-                let dec = parseFloat(row.querySelector('.t2-dec').value);
-                if(T && inc && dec) { constant2 = T / Math.pow((inc + dec) / 2, 2); break; }
-            }
-
-            if(constant2 > 0) {
-                t2Rows.forEach(row => {
-                    let tStr = row.querySelector('.t2-T').value;
-                    let T = evaluateTension(tStr);
-                    if(T) {
-                        let idealL = Math.sqrt(T / constant2);
-                        let meanNoise = (Math.random() * 0.1) - 0.05; 
-                        let targetMean = idealL + meanNoise;
-                        let realisticDifference = (Math.random() * 0.2) + 0.1;
-                        row.querySelector('.t2-inc').value = (targetMean - realisticDifference / 2).toFixed(1);
-                        row.querySelector('.t2-dec').value = (targetMean + realisticDifference / 2).toFixed(1);
-                    }
-                });
-            }
-
-            if (constant1 > 0 || constant2 > 0) { calculateAndGraph(); } 
-            else { alert("Please fill out at least the FIRST row in both tables before manipulating!"); }
+            let constant1 = 0, constant2 = 0;
+            for(let row of t1Rows) { let n = parseFloat(row.querySelector('.t1-n').value), inc = parseFloat(row.querySelector('.t1-inc').value), dec = parseFloat(row.querySelector('.t1-dec').value); if(n && inc && dec) { constant1 = n * ((inc + dec) / 2); break; } }
+            if(constant1 > 0) t1Rows.forEach(row => { let n = parseFloat(row.querySelector('.t1-n').value); if(n) { let ideal = constant1 / n, meanNoise = (Math.random() * 0.1) - 0.05, diff = (Math.random() * 0.2) + 0.1; row.querySelector('.t1-inc').value = (ideal + meanNoise - diff/2).toFixed(1); row.querySelector('.t1-dec').value = (ideal + meanNoise + diff/2).toFixed(1); }});
+            for(let row of t2Rows) { let T = evaluateTension(row.querySelector('.t2-T').value), inc = parseFloat(row.querySelector('.t2-inc').value), dec = parseFloat(row.querySelector('.t2-dec').value); if(T && inc && dec) { constant2 = T / Math.pow((inc + dec) / 2, 2); break; } }
+            if(constant2 > 0) t2Rows.forEach(row => { let T = evaluateTension(row.querySelector('.t2-T').value); if(T) { let ideal = Math.sqrt(T / constant2), meanNoise = (Math.random() * 0.1) - 0.05, diff = (Math.random() * 0.2) + 0.1; row.querySelector('.t2-inc').value = (ideal + meanNoise - diff/2).toFixed(1); row.querySelector('.t2-dec').value = (ideal + meanNoise + diff/2).toFixed(1); }});
+            if (constant1 > 0 || constant2 > 0) calculateAndGraph(); else alert("Fill the first row of both tables first!");
         }
 
         function restoreData() {
-            if (originalDataT1.length === 0 && originalDataT2.length === 0) { return; }
-            const t1Rows = document.querySelectorAll('#table1 tbody tr');
-            t1Rows.forEach((row, index) => {
-                if(originalDataT1[index]) { row.querySelector('.t1-inc').value = originalDataT1[index].inc; row.querySelector('.t1-dec').value = originalDataT1[index].dec; }
-            });
-            const t2Rows = document.querySelectorAll('#table2 tbody tr');
-            t2Rows.forEach((row, index) => {
-                if(originalDataT2[index]) { row.querySelector('.t2-inc').value = originalDataT2[index].inc; row.querySelector('.t2-dec').value = originalDataT2[index].dec; }
-            });
-            originalDataT1 = []; originalDataT2 = [];
-            calculateAndGraph();
+            if (originalDataT1.length === 0) return;
+            document.querySelectorAll('#table1 tbody tr').forEach((row, i) => { if(originalDataT1[i]) { row.querySelector('.t1-inc').value = originalDataT1[i].inc; row.querySelector('.t1-dec').value = originalDataT1[i].dec; }});
+            document.querySelectorAll('#table2 tbody tr').forEach((row, i) => { if(originalDataT2[i]) { row.querySelector('.t2-inc').value = originalDataT2[i].inc; row.querySelector('.t2-dec').value = originalDataT2[i].dec; }});
+            originalDataT1 = []; originalDataT2 = []; calculateAndGraph();
         }
 
         function generateSampleData() {
-            document.getElementById('t1-rows').value = 3;
-            generateTable1();
-            const t1Rows = document.querySelectorAll('#table1 tbody tr');
-            const freqs = [256, 384, 512];
-            const idealL1 = [51.2, 34.1, 25.6]; 
-            
-            t1Rows.forEach((row, i) => {
-                row.querySelector('.t1-n').value = freqs[i];
-                row.querySelector('.t1-inc').value = (idealL1[i] - 0.2).toFixed(1);
-                row.querySelector('.t1-dec').value = (idealL1[i] + 0.1).toFixed(1);
-            });
-
-            document.getElementById('t2-rows').value = 3;
-            generateTable2();
-            const t2Rows = document.querySelectorAll('#table2 tbody tr');
-            const tensions = ["2.5 * 9.8", "3.0 * 9.8", "3.5 * 9.8"];
-            const idealL2 = [45.1, 49.4, 53.4]; 
-            
-            t2Rows.forEach((row, i) => {
-                row.querySelector('.t2-T').value = tensions[i];
-                row.querySelector('.t2-inc').value = (idealL2[i] - 0.1).toFixed(1);
-                row.querySelector('.t2-dec').value = (idealL2[i] + 0.2).toFixed(1);
-            });
-
+            document.getElementById('t1-rows').value = 3; generateTable1();
+            const freqs = [256, 384, 512], idealL1 = [51.2, 34.1, 25.6];
+            document.querySelectorAll('#table1 tbody tr').forEach((row, i) => { row.querySelector('.t1-n').value = freqs[i]; row.querySelector('.t1-inc').value = (idealL1[i] - 0.2).toFixed(1); row.querySelector('.t1-dec').value = (idealL1[i] + 0.1).toFixed(1); });
+            document.getElementById('t2-rows').value = 3; generateTable2();
+            const tensions = ["2.5 * 9.8", "3.0 * 9.8", "3.5 * 9.8"], idealL2 = [45.1, 49.4, 53.4];
+            document.querySelectorAll('#table2 tbody tr').forEach((row, i) => { row.querySelector('.t2-T').value = tensions[i]; row.querySelector('.t2-inc').value = (idealL2[i] - 0.1).toFixed(1); row.querySelector('.t2-dec').value = (idealL2[i] + 0.2).toFixed(1); });
             calculateAndGraph();
         }
 
         function exportData() {
             const data = { t1: [], t2: [] };
-            
-            document.querySelectorAll('#table1 tbody tr').forEach(row => {
-                data.t1.push({
-                    n: row.querySelector('.t1-n').value,
-                    inc: row.querySelector('.t1-inc').value,
-                    dec: row.querySelector('.t1-dec').value
-                });
-            });
-
-            document.querySelectorAll('#table2 tbody tr').forEach(row => {
-                data.t2.push({
-                    T: row.querySelector('.t2-T').value,
-                    inc: row.querySelector('.t2-inc').value,
-                    dec: row.querySelector('.t2-dec').value
-                });
-            });
-
-            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(data));
-            const downloadAnchorNode = document.createElement('a');
-            downloadAnchorNode.setAttribute("href", dataStr);
-            downloadAnchorNode.setAttribute("download", "sonometer_data.json");
-            document.body.appendChild(downloadAnchorNode); 
-            downloadAnchorNode.click();
-            downloadAnchorNode.remove();
+            document.querySelectorAll('#table1 tbody tr').forEach(row => data.t1.push({n: row.querySelector('.t1-n').value, inc: row.querySelector('.t1-inc').value, dec: row.querySelector('.t1-dec').value}));
+            document.querySelectorAll('#table2 tbody tr').forEach(row => data.t2.push({T: row.querySelector('.t2-T').value, inc: row.querySelector('.t2-inc').value, dec: row.querySelector('.t2-dec').value}));
+            const a = document.createElement('a'); a.href = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(data)); a.download = "sonometer_data.json"; document.body.appendChild(a); a.click(); a.remove();
         }
 
         function importData(event) {
-            const file = event.target.files[0];
-            if (!file) return;
-            
+            const file = event.target.files[0]; if (!file) return;
             const reader = new FileReader();
             reader.onload = function(e) {
                 const data = JSON.parse(e.target.result);
-                
-                document.getElementById('t1-rows').value = data.t1.length;
-                generateTable1();
-                const t1Rows = document.querySelectorAll('#table1 tbody tr');
-                data.t1.forEach((rowData, i) => {
-                    t1Rows[i].querySelector('.t1-n').value = rowData.n;
-                    t1Rows[i].querySelector('.t1-inc').value = rowData.inc;
-                    t1Rows[i].querySelector('.t1-dec').value = rowData.dec;
-                });
-
-                document.getElementById('t2-rows').value = data.t2.length;
-                generateTable2();
-                const t2Rows = document.querySelectorAll('#table2 tbody tr');
-                data.t2.forEach((rowData, i) => {
-                    t2Rows[i].querySelector('.t2-T').value = rowData.T;
-                    t2Rows[i].querySelector('.t2-inc').value = rowData.inc;
-                    t2Rows[i].querySelector('.t2-dec').value = rowData.dec;
-                });
-
+                document.getElementById('t1-rows').value = data.t1.length; generateTable1();
+                document.querySelectorAll('#table1 tbody tr').forEach((row, i) => { row.querySelector('.t1-n').value = data.t1[i].n; row.querySelector('.t1-inc').value = data.t1[i].inc; row.querySelector('.t1-dec').value = data.t1[i].dec; });
+                document.getElementById('t2-rows').value = data.t2.length; generateTable2();
+                document.querySelectorAll('#table2 tbody tr').forEach((row, i) => { row.querySelector('.t2-T').value = data.t2[i].T; row.querySelector('.t2-inc').value = data.t2[i].inc; row.querySelector('.t2-dec').value = data.t2[i].dec; });
                 calculateAndGraph();
             };
-            reader.readAsText(file);
-            event.target.value = '';
+            reader.readAsText(file); event.target.value = '';
         }
 
+        // --- Clean PDF Export ---
         function exportPDF() {
-            // Before printing, forcefully update the charts to ensure they draw with black text for printing
-            Chart.defaults.color = '#000';
-            chart1.options.scales.x.ticks.color = '#000';
-            chart1.options.scales.x.title.color = '#000';
-            chart1.options.scales.y.ticks.color = '#000';
-            chart1.options.scales.y.title.color = '#000';
-            chart1.options.plugins.title.color = '#000';
-            chart1.update();
+            const element = document.getElementById('export-container');
+            const loader = document.getElementById('loader');
+            
+            loader.style.display = 'flex';
+            
+            // Hide UI buttons
+            element.classList.add('export-mode');
 
-            chart2.options.scales.x.ticks.color = '#000';
-            chart2.options.scales.x.title.color = '#000';
-            chart2.options.scales.y.ticks.color = '#000';
-            chart2.options.scales.y.title.color = '#000';
-            chart2.options.plugins.title.color = '#000';
-            chart2.update();
+            // Convert inputs to plain text spans to keep values visible
+            const inputs = element.querySelectorAll('input:not([type="file"])');
+            inputs.forEach(input => {
+                const span = document.createElement('span');
+                span.className = 'temp-pdf-span';
+                span.innerText = input.value || '-';
+                input.parentNode.insertBefore(span, input);
+                input.style.display = 'none';
+            });
 
-            window.print();
+            // Convert live charts to static images to prevent rendering bugs
+            const c1 = document.getElementById('graph1');
+            const c2 = document.getElementById('graph2');
+            const gc1 = document.getElementById('gc1');
+            const gc2 = document.getElementById('gc2');
 
-            // Restore theme colors after print dialogue closes
+            const img1 = document.createElement('img');
+            img1.id = 'temp-img1';
+            img1.src = chart1.toBase64Image();
+            img1.style.width = '100%';
+            img1.style.height = '100%';
+            img1.style.objectFit = 'contain';
+
+            const img2 = document.createElement('img');
+            img2.id = 'temp-img2';
+            img2.src = chart2.toBase64Image();
+            img2.style.width = '100%';
+            img2.style.height = '100%';
+            img2.style.objectFit = 'contain';
+
+            c1.style.display = 'none';
+            c2.style.display = 'none';
+            gc1.appendChild(img1);
+            gc2.appendChild(img2);
+
             setTimeout(() => {
-                const isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-                const textColor = isDark ? '#ffffff' : '#000000';
-                
-                Chart.defaults.color = textColor;
-                chart1.options.scales.x.ticks.color = textColor;
-                chart1.options.scales.x.title.color = textColor;
-                chart1.options.scales.y.ticks.color = textColor;
-                chart1.options.scales.y.title.color = textColor;
-                chart1.options.plugins.title.color = textColor;
-                chart1.update();
+                const opt = {
+                    margin:       10, 
+                    filename:     'Physics_Record_25111304_Omm_Pradhan.pdf',
+                    image:        { type: 'jpeg', quality: 0.98 },
+                    html2canvas:  { scale: 2, useCORS: true },
+                    // Normal A4 layout with standard pagination
+                    jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' },
+                    // Instructs PDF generator to respect the 'avoid-break' CSS classes
+                    pagebreak:    { mode: 'css', avoid: ['.avoid-break'] }
+                };
 
-                chart2.options.scales.x.ticks.color = textColor;
-                chart2.options.scales.x.title.color = textColor;
-                chart2.options.scales.y.ticks.color = textColor;
-                chart2.options.scales.y.title.color = textColor;
-                chart2.options.plugins.title.color = textColor;
-                chart2.update();
-            }, 500);
+                html2pdf().set(opt).from(element).save().then(() => {
+                    // Restore original view
+                    element.classList.remove('export-mode');
+                    document.getElementById('temp-img1').remove();
+                    document.getElementById('temp-img2').remove();
+                    c1.style.display = '';
+                    c2.style.display = '';
+
+                    inputs.forEach(input => {
+                        input.style.display = '';
+                        const span = input.previousElementSibling;
+                        if(span && span.classList.contains('temp-pdf-span')) span.remove();
+                    });
+                    
+                    loader.style.display = 'none';
+                }).catch(err => {
+                    alert("PDF generation failed.");
+                    loader.style.display = 'none';
+                });
+            }, 500); 
         }
 
-        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
-            calculateAndGraph(); 
-        });
-
-        window.onload = () => {
-            generateTable1();
-            generateTable2();
-        };
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', calculateAndGraph);
+        window.onload = () => { generateTable1(); generateTable2(); };
     </script>
 </body>
 </html>
-    </textarea>
+  </textarea>
 
     <textarea id="exp6v2" style="display:none;">
 <!DOCTYPE html>
@@ -4207,7 +4240,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sonometer Experiment: Advanced Laboratory Record</title>
+    <title>Sonometer Experiment: Laboratory Record</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Lora:ital,wght@0,400;0,600;1,400&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -4278,8 +4311,8 @@
         .result-box { background: var(--success); color: white; padding: 1.5rem; border-radius: var(--radius); font-size: 1.1rem; text-align: center; margin-top: 2rem; font-family: 'Lora', serif; }
 
         /* Canvas Graphs */
-        .graph-container { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; background: #fff; margin-bottom: 1rem; }
-        .graph-header { text-align: center; font-family: 'Lora', serif; font-weight: 600; margin-bottom: 0.5rem; }
+        .graph-container { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; background: #fff; margin-bottom: 1rem; box-shadow: var(--shadow); }
+        .graph-header { text-align: center; font-family: 'Lora', serif; font-weight: 600; margin-bottom: 1rem; font-size: 1.1rem; }
         canvas { width: 100%; height: auto; display: block; }
         .graph-grid { display: grid; grid-template-columns: 1fr; gap: 2rem; }
         @media (min-width: 900px) { .graph-grid { grid-template-columns: 1fr 1fr; } }
@@ -4305,7 +4338,8 @@
             input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
             table { border: 1px solid #000; }
             th, td { border: 1px solid #000; padding: 6px; }
-            canvas { max-width: 100%; }
+            canvas { max-width: 100%; border: 1px solid #e2e8f0; border-radius: 4px; }
+            .graph-container { box-shadow: none; border: none; padding: 0;}
             @page { margin: 1cm; size: auto; }
             h2 { border-bottom: 2px solid #000; }
         }
@@ -4315,7 +4349,7 @@
 
 <div class="card no-print" style="text-align: center; border-top: 6px solid var(--primary); margin-bottom: 1rem;">
     <h1>Verification of the Laws of Transverse Vibration of a Stretched String</h1>
-    <p class="subtitle" style="text-align: center; color: var(--text-muted);">Department of Physics &bull; Advanced Laboratory Record</p>
+    <p class="subtitle" style="text-align: center; color: var(--text-muted);">Department of Physics &bull; Laboratory Record</p>
 </div>
 
 <div class="toolbar no-print">
@@ -4371,10 +4405,6 @@
         <div class="control-group">
             <label>Tension T (N)</label>
             <input type="text" id="t1-tension" readonly title="T = m &times; 9.8">
-        </div>
-        <div class="control-group">
-            <label>Linear Density &mu; (kg/m)</label>
-            <input type="number" id="t1-mu" value="0.0015" step="0.0001" onchange="calculateAll();">
         </div>
         <div class="control-group">
             <label>Observations</label>
@@ -4452,25 +4482,13 @@
 <div class="card" style="page-break-inside: avoid;">
     <h2>5. Graphical & Regression Analysis</h2>
     <div class="graph-grid">
-        <div>
-            <div class="graph-container">
-                <div class="graph-header">Graph 1: Frequency vs 1/Length</div>
-                <canvas id="canvas-main-1" width="500" height="350"></canvas>
-            </div>
-            <div class="graph-container">
-                <div class="graph-header" style="font-size: 0.9rem;">Residual Plot (Graph 1)</div>
-                <canvas id="canvas-res-1" width="500" height="150"></canvas>
-            </div>
+        <div class="graph-container">
+            <div class="graph-header">Graph 1: Frequency vs 1/Length</div>
+            <canvas id="canvas-main-1" width="500" height="400"></canvas>
         </div>
-        <div>
-            <div class="graph-container">
-                <div class="graph-header">Graph 2: Tension vs Length&sup2;</div>
-                <canvas id="canvas-main-2" width="500" height="350"></canvas>
-            </div>
-            <div class="graph-container">
-                <div class="graph-header" style="font-size: 0.9rem;">Residual Plot (Graph 2)</div>
-                <canvas id="canvas-res-2" width="500" height="150"></canvas>
-            </div>
+        <div class="graph-container">
+            <div class="graph-header">Graph 2: Tension vs Length&sup2;</div>
+            <canvas id="canvas-main-2" width="500" height="400"></canvas>
         </div>
     </div>
 </div>
@@ -4479,7 +4497,7 @@
     <h2>6. Result & Conclusion</h2>
     <div id="final-result" class="result-box">Awaiting Data...</div>
     <div style="margin-top: 1.5rem;">
-        <p><strong>Discussion:</strong> The empirical data was analyzed using Ordinary Least Squares (OLS) regression. Theoretical values calculated via the wave equation provide a benchmark for assessing experimental accuracy. Uncertainties arise primarily from the subjective determination of resonance (paper rider method), wire non-uniformity, and assumption of perfect rigidity at the bridges.</p>
+        <p><strong>Discussion:</strong> The empirical data was analyzed using Ordinary Least Squares (OLS) regression. Theoretical linearity provides a benchmark for assessing experimental accuracy. Uncertainties arise primarily from the subjective determination of resonance (paper rider method), wire non-uniformity, and assumption of perfect rigidity at the bridges.</p>
     </div>
 </div>
 
@@ -4543,7 +4561,6 @@
         readDOM1(); readDOM2();
         const data = {
             mass: document.getElementById('t1-mass').value,
-            mu: document.getElementById('t1-mu').value,
             freq: document.getElementById('t2-freq').value,
             t1Rows: document.getElementById('t1-rows').value,
             t2Rows: document.getElementById('t2-rows').value,
@@ -4567,7 +4584,6 @@
             try {
                 const data = JSON.parse(e.target.result);
                 document.getElementById('t1-mass').value = data.mass || 2.0;
-                document.getElementById('t1-mu').value = data.mu || 0.0015;
                 document.getElementById('t2-freq').value = data.freq || 256;
                 document.getElementById('t1-rows').value = data.t1Rows || 5;
                 document.getElementById('t2-rows').value = data.t2Rows || 5;
@@ -4746,7 +4762,6 @@
 
     function calculateAll() {
         let w = parseFloat(document.getElementById('t1-mass').value) || 0;
-        let mu = parseFloat(document.getElementById('t1-mu').value) || 0.0015;
         let T1 = w * 9.8;
         document.getElementById('t1-tension').value = T1.toFixed(2);
         
@@ -4781,19 +4796,13 @@
                 document.getElementById(`t1-dev-${j}`).innerText = dev.toFixed(2) + "%";
             }
 
-            let th_nl = (1/2) * Math.sqrt(T1 / mu) * 100;
-            let err = Math.abs(mean_nl - th_nl) / th_nl * 100;
-
             t1Text += `Experimental Mean (n × l) = ${mean_nl.toFixed(3)} Hz·cm\n`;
             t1Text += `Standard Deviation (σ)    = ${sd_nl.toFixed(3)}\n`;
-            t1Text += `Theoretical (n × l)th   = (1/2)·√(T/μ) = ${(th_nl).toFixed(3)} Hz·cm\n`;
-            t1Text += `Absolute % Error        = ${err.toFixed(2)}%\n`;
         } else {
             t1Text += "Awaiting Data...";
         }
         document.getElementById('t1-analysis').innerText = t1Text;
 
-        let freq2 = parseFloat(document.getElementById('t2-freq').value) || 256;
         let r2 = parseInt(document.getElementById('t2-rows').value);
         let tl2s = []; let pts2 = []; let t2Text = "[Statistical Analysis - Law of Tension]\n";
 
@@ -4825,20 +4834,15 @@
                 document.getElementById(`t2-dev-${j}`).innerText = dev.toFixed(2) + "%";
             }
 
-            let th_tl2 = 4 * freq2 * freq2 * mu / 10000;
-            let err2 = Math.abs(mean_tl2 - th_tl2) / th_tl2 * 100;
-
             t2Text += `Experimental Mean (T / l²) = ${mean_tl2.toFixed(4)} N/cm²\n`;
             t2Text += `Standard Deviation (σ)     = ${sd_tl2.toFixed(5)}\n`;
-            t2Text += `Theoretical (T / l²)th     = 4n²μ = ${th_tl2.toFixed(4)} N/cm²\n`;
-            t2Text += `Absolute % Error         = ${err2.toFixed(2)}%\n`;
         } else {
             t2Text += "Awaiting Data...";
         }
         document.getElementById('t2-analysis').innerText = t2Text;
 
-        let reg1 = drawGraph('canvas-main-1', 'canvas-res-1', pts1, 'Frequency (Hz)', '1/Length (cm⁻¹)', true, "#2563eb");
-        let reg2 = drawGraph('canvas-main-2', 'canvas-res-2', pts2, 'Tension (N)', 'Length² (cm²)', true, "#059669");
+        let reg1 = drawGraph('canvas-main-1', pts1, 'Frequency (Hz)', '1/Length (cm⁻¹)', true, "#2563eb");
+        let reg2 = drawGraph('canvas-main-2', pts2, 'Tension (N)', 'Length² (cm²)', true, "#059669");
         
         globalR2_1 = reg1 ? reg1.r2 : 0;
         globalR2_2 = reg2 ? reg2.r2 : 0;
@@ -4853,16 +4857,12 @@
     }
 
     /* --- Graphics Engine --- */
-    function drawGraph(canvasId, resCanvasId, pts, xLabel, yLabel, forceOrigin, color) {
+    function drawGraph(canvasId, pts, xLabel, yLabel, forceOrigin, color) {
         let canvas = document.getElementById(canvasId);
         let ctx = canvas.getContext('2d');
         let w = canvas.width, h = canvas.height, pad = 60;
         ctx.clearRect(0,0,w,h);
         
-        let resCanvas = document.getElementById(resCanvasId);
-        let resCtx = resCanvas.getContext('2d');
-        resCtx.clearRect(0,0,resCanvas.width,resCanvas.height);
-
         if(pts.length < 2) return null;
 
         let reg = calculateRegression(pts, forceOrigin);
@@ -4907,40 +4907,7 @@
         ctx.fillText(`y = ${reg.m.toPrecision(4)}x ${reg.c !== 0 ? '+ '+reg.c.toPrecision(3) : ''}`, pad+10, pad);
         ctx.fillText(`R² = ${reg.r2.toFixed(4)}`, pad+10, pad+20);
 
-        // Residual Plot
-        drawResiduals(resCanvasId, pts, reg, maxX);
-
         return reg;
-    }
-
-    function drawResiduals(canvasId, pts, reg, maxX) {
-        let canvas = document.getElementById(canvasId);
-        let ctx = canvas.getContext('2d');
-        let w = canvas.width, h = canvas.height, pad = 40;
-
-        let resids = pts.map(p => {
-            let pred = reg.m * p.x + reg.c;
-            return { x: p.x, res: p.y - pred };
-        });
-        
-        let maxRes = Math.max(...resids.map(r=>Math.abs(r.res))) * 1.5;
-        if(maxRes === 0) maxRes = 1;
-
-        let scaleX = x => pad + (x/maxX)*(w - pad*1.5);
-        let scaleY = r => h/2 - (r/maxRes)*(h/2 - 10);
-
-        ctx.strokeStyle = "#cbd5e1"; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(pad, h/2); ctx.lineTo(w-pad/2, h/2); ctx.stroke(); 
-        
-        ctx.strokeStyle = "#475569"; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.moveTo(pad, 10); ctx.lineTo(pad, h-10); ctx.stroke(); 
-
-        ctx.fillStyle = isAdjusted ? "#d97706" : "#ef4444";
-        resids.forEach(r => {
-            let px = scaleX(r.x); let py = scaleY(r.res);
-            ctx.beginPath(); ctx.moveTo(px, h/2); ctx.lineTo(px, py); ctx.stroke();
-            ctx.beginPath(); ctx.arc(px, py, 3, 0, Math.PI*2); ctx.fill();
-        });
     }
 
     // Init with 5 empty rows
@@ -4954,6 +4921,7 @@
 </body>
 </html>
     </textarea>
+
 <textarea id="exp7v1" style="display:none;">
 <!DOCTYPE html>
 <html lang="en">
