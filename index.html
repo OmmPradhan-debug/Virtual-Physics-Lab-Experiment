@@ -5077,19 +5077,24 @@
         .charts-container {
             display: flex;
             flex-direction: column;
-            gap: 20px;
+            gap: 30px; /* Increased gap to accommodate larger charts */
         }
 
         .chart-wrapper {
             background: white;
             border: 1px solid var(--border);
             border-radius: 5px;
-            padding: 10px;
+            padding: 15px;
+            height: 500px; /* Fixed larger height for maximum visibility */
+            position: relative;
         }
 
         @media (max-width: 900px) {
             .container {
                 grid-template-columns: 1fr;
+            }
+            .chart-wrapper {
+                height: 400px; /* Slightly smaller on mobile but still large */
             }
         }
     </style>
@@ -5356,34 +5361,27 @@
             event.target.value = ''; 
         }
 
-        // Global Single-Page PDF Export Function
         function exportFullSinglePagePDF() {
-            // Ensure white background for PDF capture
             Chart.defaults.plugins.customCanvasBackgroundColor = { color: 'white' };
             
-            // Expand max-height temporarily to ensure all table rows are visible in PDF
             document.querySelectorAll('.table-container').forEach(container => {
                 container.style.maxHeight = 'none';
                 container.style.overflow = 'visible';
             });
 
             const element = document.getElementById('report-content');
-            
-            // Calculate actual pixel dimensions of the report content
             const width = element.scrollWidth;
             const height = element.scrollHeight;
 
             const opt = {
-                margin:       [10, 10, 10, 10], // top, left, bottom, right
+                margin:       [10, 10, 10, 10],
                 filename:     'RC_Circuit_Full_Lab_Report.pdf',
                 image:        { type: 'jpeg', quality: 0.98 },
                 html2canvas:  { scale: 2, useCORS: true, backgroundColor: '#f4f7f6' },
-                // Create custom PDF dimensions matching the HTML layout exactly
                 jsPDF:        { unit: 'px', format: [width + 20, height + 20], orientation: 'portrait' }
             };
             
             html2pdf().set(opt).from(element).save().then(() => {
-                // Restore original table scrolling after export
                 document.querySelectorAll('.table-container').forEach(container => {
                     container.style.maxHeight = '400px';
                     container.style.overflowY = 'auto';
@@ -5392,7 +5390,6 @@
         }
 
         function calculateAndGraph(id) {
-            // Include Resistance and Capacitance directly from UI to show dynamically in Results
             const R_ui = document.getElementById(`R${id}`).value;
             const C_ui = document.getElementById(`C${id}`).value;
             const R = parseFloat(R_ui);
@@ -5449,15 +5446,53 @@
             const chargeData = validData.map(d => d.c);
             const dischargeData = validData.map(d => d.d);
 
+            // Draw standard charts
             drawChart(id, 'charge', labels, [{ label: 'Charging Voltage (V)', data: chargeData, borderColor: '#ff6384', backgroundColor: 'rgba(255, 99, 132, 0.2)' }]);
             drawChart(id, 'discharge', labels, [{ label: 'Discharging Voltage (V)', data: dischargeData, borderColor: '#36a2eb', backgroundColor: 'rgba(54, 162, 235, 0.2)' }]);
+            
+            // Draw Combined Chart and pass the intersection time to draw the line
             drawChart(id, 'both', labels, [
                 { label: 'Charging Voltage (V)', data: chargeData, borderColor: '#ff6384', backgroundColor: 'transparent' },
                 { label: 'Discharging Voltage (V)', data: dischargeData, borderColor: '#36a2eb', backgroundColor: 'transparent' }
-            ]);
+            ], t_intersect);
         }
 
-        function drawChart(id, type, labels, datasets) {
+        // Custom plugin to draw the vertical intersection line
+        const intersectionLinePlugin = {
+            id: 'intersectionLine',
+            afterDraw: (chart, args, options) => {
+                if (options.t_intersect !== undefined && options.t_intersect !== null) {
+                    const ctx = chart.ctx;
+                    const xAxis = chart.scales.x;
+                    const yAxis = chart.scales.y;
+                    
+                    // Convert the actual time value to pixel coordinates on the canvas
+                    const xPixel = xAxis.getPixelForValue(options.t_intersect);
+                    
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.moveTo(xPixel, yAxis.top);
+                    ctx.lineTo(xPixel, yAxis.bottom);
+                    ctx.lineWidth = 2;
+                    ctx.strokeStyle = 'rgba(0, 0, 0, 0.6)';
+                    ctx.setLineDash([5, 5]); // Dashed line
+                    ctx.stroke();
+
+                    // Draw a small background for the text so it's readable over the grid
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+                    ctx.fillRect(xPixel + 5, yAxis.top + 5, 135, 20);
+
+                    // Draw the label
+                    ctx.fillStyle = 'black';
+                    ctx.font = 'bold 12px sans-serif';
+                    ctx.fillText(`Intersection: ${options.t_intersect.toFixed(2)}s`, xPixel + 10, yAxis.top + 20);
+                    ctx.restore();
+                }
+            }
+        };
+
+        // Added intersectionTime parameter
+        function drawChart(id, type, labels, datasets, intersectionTime = null) {
             const canvasId = `chart${id}_${type}`;
             const ctx = document.getElementById(canvasId).getContext('2d');
 
@@ -5475,6 +5510,15 @@
                 }
             };
 
+            // Setup plugins array based on whether we need the intersection line
+            const activePlugins = [customCanvasBackgroundColor];
+            let pluginOptions = { customCanvasBackgroundColor: { color: 'white' } };
+
+            if (intersectionTime !== null) {
+                activePlugins.push(intersectionLinePlugin);
+                pluginOptions.intersectionLine = { t_intersect: intersectionTime };
+            }
+
             chartInstances[id][type] = new Chart(ctx, {
                 type: 'line',
                 data: {
@@ -5485,8 +5529,9 @@
                 },
                 options: {
                     responsive: true,
+                    maintainAspectRatio: false, // Allows the charts to fill the new 500px height
                     plugins: {
-                        customCanvasBackgroundColor: { color: 'white' },
+                        ...pluginOptions,
                         title: {
                             display: true,
                             text: type === 'both' ? 'Charging & Discharging vs Time' : 
@@ -5499,7 +5544,7 @@
                         y: { title: { display: true, text: 'Voltage (V)', font: {weight: 'bold'} } }
                     }
                 },
-                plugins: [customCanvasBackgroundColor]
+                plugins: activePlugins
             });
         }
     </script>
