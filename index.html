@@ -464,10 +464,10 @@
         table { width: 100%; border-collapse: collapse; font-size: 14px; }
         th { background-color: #f1f5f9; color: #475569; font-weight: 600; padding: 12px; border: 1px solid var(--border-color); text-align: center; }
         td { padding: 8px; border: 1px solid var(--border-color); text-align: center; }
-        td input { width: 70px; background: #fff; text-align: center; }
+        td input { width: 75px; background: #fff; text-align: center; }
         
         .readonly-cell { background-color: #f8fafc; color: #64748b; font-weight: 500; }
-        .hidden-col { display: none !important; }
+        .mean-highlight { border: 2px solid var(--primary) !important; font-weight: bold; color: var(--primary); }
 
         #graph-container {
             width: 100%; height: 650px; border: 1px solid var(--border-color); border-radius: 8px; margin-bottom: 30px; overflow: hidden;
@@ -504,13 +504,8 @@
         <h2>1. Observation Table</h2>
         <div class="controls" data-html2canvas-ignore="true">
             <label>Total observations: <input type="number" id="num-obs" value="18" min="4" step="2" style="width:60px"></label>
-            <label>Input Mode: 
-                <select id="input-mode" onchange="toggleInputMode()">
-                    <option value="trials">3 Trials (t₁, t₂, t₃)</option>
-                    <option value="mean">Direct Mean Time (t)</option>
-                </select>
-            </label>
             <button onclick="generateTable1()">Generate Table</button>
+            <span style="font-size:13px; color: #64748b; margin-left: 10px;">(Tip: You can directly type into the "Mean t" box to save time!)</span>
         </div>
 
         <div class="table-responsive">
@@ -519,9 +514,9 @@
                     <tr>
                         <th>Hole No.</th>
                         <th>Dist from C.G. (cm)</th>
-                        <th class="trial-col">t₁ (sec)</th>
-                        <th class="trial-col">t₂ (sec)</th>
-                        <th class="trial-col">t₃ (sec)</th>
+                        <th>t₁ (sec)</th>
+                        <th>t₂ (sec)</th>
+                        <th>t₃ (sec)</th>
                         <th>Mean t (sec)</th>
                         <th>Time for 1 osc (T=t/20) sec</th>
                     </tr>
@@ -665,68 +660,35 @@
             tr.innerHTML = `
                 <td>${i + 1}</td>
                 <td class="readonly-cell">${dist}${side} (${dist} cm)</td>
-                <td class="trial-col"><input type="number" step="0.01" id="t1-${i}" oninput="updateRow(${i})"></td>
-                <td class="trial-col"><input type="number" step="0.01" id="t2-${i}" oninput="updateRow(${i})"></td>
-                <td class="trial-col"><input type="number" step="0.01" id="t3-${i}" oninput="updateRow(${i})"></td>
-                <td><input type="number" step="0.001" id="mean-input-${i}" class="mean-input readonly-cell" readonly oninput="updateRowFromMean(${i})"></td>
+                <td><input type="number" step="0.01" id="t1-${i}" oninput="updateFromTrials(${i})"></td>
+                <td><input type="number" step="0.01" id="t2-${i}" oninput="updateFromTrials(${i})"></td>
+                <td><input type="number" step="0.01" id="t3-${i}" oninput="updateFromTrials(${i})"></td>
+                <td><input type="number" step="0.001" id="mean-input-${i}" class="mean-highlight" oninput="updateFromMean(${i})"></td>
                 <td id="T-${i}" class="readonly-cell">-</td>
                 <input type="hidden" id="dist-${i}" value="${dist}">
                 <input type="hidden" id="side-${i}" value="${side}">
             `;
             tbody.appendChild(tr);
         }
-        
-        toggleInputMode(); // Ensure UI honors the dropdown instantly
         updateGraphData();
     }
 
-    function toggleInputMode() {
-        const mode = document.getElementById('input-mode').value;
-        const trialCols = document.querySelectorAll('.trial-col');
-        const meanInputs = document.querySelectorAll('.mean-input');
-
-        if (mode === 'mean') {
-            trialCols.forEach(col => col.classList.add('hidden-col'));
-            meanInputs.forEach(input => {
-                input.readOnly = false;
-                input.classList.remove('readonly-cell');
-            });
-        } else {
-            trialCols.forEach(col => col.classList.remove('hidden-col'));
-            meanInputs.forEach(input => {
-                input.readOnly = true;
-                input.classList.add('readonly-cell');
-            });
-            // Recalculate based on individual trials if switching back
-            let numObs = parseInt(document.getElementById('num-obs').value);
-            for(let i=0; i<numObs; i++) updateRow(i);
-        }
-    }
-
-    function updateRow(index) {
-        if (document.getElementById('input-mode').value === 'mean') return; // Do not override if in mean mode
-        
+    // Triggered when typing into t1, t2, or t3
+    function updateFromTrials(index) {
         let t1 = parseFloat(document.getElementById(`t1-${index}`).value);
         let t2 = parseFloat(document.getElementById(`t2-${index}`).value);
         let t3 = parseFloat(document.getElementById(`t3-${index}`).value);
-        let meanInput = document.getElementById(`mean-input-${index}`);
-        let TCell = document.getElementById(`T-${index}`);
 
+        // If all three trials exist, auto-calculate the mean box
         if (!isNaN(t1) && !isNaN(t2) && !isNaN(t3)) {
             let mean = (t1 + t2 + t3) / 3;
-            meanInput.value = mean.toFixed(3);
-            let T = mean / 20;
-            TCell.textContent = T.toFixed(4);
-        } else {
-            meanInput.value = '';
-            TCell.textContent = '-';
+            document.getElementById(`mean-input-${index}`).value = mean.toFixed(3);
+            updateFromMean(index); // Push it down to calculate T
         }
-        updateGraphData();
     }
 
-    function updateRowFromMean(index) {
-        if (document.getElementById('input-mode').value === 'trials') return; // Do not override if in trials mode
-        
+    // Triggered when directly typing into the Mean box (or passed down from Trials)
+    function updateFromMean(index) {
         let mean = parseFloat(document.getElementById(`mean-input-${index}`).value);
         let TCell = document.getElementById(`T-${index}`);
 
@@ -876,7 +838,7 @@
             plot_bgcolor: bg, paper_bgcolor: paperBg, shapes: [],
             legend: { font: { color: textCol } },
             margin: { l: 60, r: 40, t: 60, b: 60 },
-            hoverlabel: { font: { color: '#ffffff' } } // Fix for point #1: Forces all hover text to be white
+            hoverlabel: { font: { color: '#ffffff' } } // Tooltip text forced to pure white
         };
 
         let data = [traceLeft, traceRight];
@@ -955,20 +917,12 @@
     function fillSampleData() {
         const dummyT = [ 1.63, 1.63, 1.58, 1.58, 1.53, 1.53, 1.50, 1.50, 1.52, 1.52, 1.58, 1.58, 1.72, 1.72, 1.98, 1.98, 2.50, 2.50 ];
         let numObs = parseInt(document.getElementById('num-obs').value);
-        let mode = document.getElementById('input-mode').value;
         
         for(let i=0; i < Math.min(numObs, dummyT.length); i++) {
             let base_t = dummyT[i] * 20; 
-            
-            if (mode === 'trials') {
-                document.getElementById(`t1-${i}`).value = (base_t).toFixed(2);
-                document.getElementById(`t2-${i}`).value = (base_t + 0.1).toFixed(2);
-                document.getElementById(`t3-${i}`).value = (base_t - 0.1).toFixed(2);
-                updateRow(i);
-            } else {
-                document.getElementById(`mean-input-${i}`).value = (base_t).toFixed(3);
-                updateRowFromMean(i);
-            }
+            // Just populate the mean box for the sample data to show how fast it is
+            document.getElementById(`mean-input-${i}`).value = (base_t).toFixed(3);
+            updateFromMean(i);
         }
         
         document.getElementById('t2-T1').value = "1.65";
@@ -981,7 +935,6 @@
         let numObs = document.getElementById('num-obs').value;
         let data = {
             numObs: numObs,
-            inputMode: document.getElementById('input-mode').value,
             theme: document.getElementById('graph-theme').value,
             lengthDecimals: document.getElementById('length-decimals').value,
             gStandard: document.getElementById('g-standard').value,
@@ -1021,7 +974,6 @@
                 let data = JSON.parse(e.target.result);
                 
                 document.getElementById('num-obs').value = data.numObs || 18;
-                document.getElementById('input-mode').value = data.inputMode || 'trials';
                 document.getElementById('graph-theme').value = data.theme || 'light';
                 document.getElementById('length-decimals').value = data.lengthDecimals || '1';
                 document.getElementById('g-standard').value = data.gStandard || '980';
@@ -1036,11 +988,7 @@
                             document.getElementById(`t3-${i}`).value = row.t3;
                             document.getElementById(`mean-input-${i}`).value = row.mean || "";
                             
-                            if (data.inputMode === 'mean') {
-                                updateRowFromMean(i);
-                            } else {
-                                updateRow(i);
-                            }
+                            updateFromMean(i); // Triggers the graph update based on whatever was in the mean box
                         }
                     });
                 }
