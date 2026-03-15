@@ -2368,14 +2368,49 @@
     function linearRegression(data) {
         let n = data.length;
         if (n < 2) return null;
-        let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
-        for (let i = 0; i < n; i++) {
-            sumX += data[i].x; sumY += data[i].y;
-            sumXX += data[i].x * data[i].x; sumXY += data[i].x * data[i].y;
+
+        let bestLine = { slope: 0, intercept: 0 };
+        let maxCount = -1;
+        let minError = Infinity;
+        
+        // Define how close a point needs to be to the line to be considered "passing through"
+        // 0.5 degrees of tolerance handles minor human error in manual readings
+        const TOLERANCE = 0.5; 
+
+        // Test a line drawn between every possible pair of points
+        for (let i = 0; i < n - 1; i++) {
+            for (let j = i + 1; j < n; j++) {
+                let dx = data[j].x - data[i].x;
+                if (Math.abs(dx) < 1e-6) continue; // Avoid division by zero
+                
+                let slope = (data[j].y - data[i].y) / dx;
+                let intercept = data[i].y - slope * data[i].x;
+                
+                let count = 0;
+                let errorSum = 0;
+                
+                // Count how many points lie on this specific line
+                for (let k = 0; k < n; k++) {
+                    let expectedY = slope * data[k].x + intercept;
+                    let diff = Math.abs(data[k].y - expectedY);
+                    
+                    if (diff <= TOLERANCE) {
+                        count++;
+                    }
+                    errorSum += diff * diff; // Track overall error for tie-breaking
+                }
+                
+                // Update the best line if this one hits more points 
+                // (or hits the same number of points but has less overall scatter)
+                if (count > maxCount || (count === maxCount && errorSum < minError)) {
+                    maxCount = count;
+                    minError = errorSum;
+                    bestLine = { slope: slope, intercept: intercept };
+                }
+            }
         }
-        let slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
-        let intercept = (sumY - slope * sumX) / n;
-        return { slope: slope, intercept: intercept };
+        
+        return bestLine;
     }
 
     // A generic plotting function to draw either the Auto chart or Custom chart
