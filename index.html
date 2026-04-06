@@ -238,6 +238,7 @@
         </div>
 
         <div class="grid-container">
+
             <div class="card">
                 <div class="card-header">
                     <h2>Bar Pendulum</h2>
@@ -337,26 +338,41 @@
             const viewer = document.getElementById('viewer');
             const titleEl = document.getElementById('viewer-title');
             const iframe = document.getElementById('exp-frame');
-            const sourceCode = document.getElementById(experimentId).value;
+            let sourceCode = document.getElementById(experimentId).value;
+
+            // --- MAGIC AUTO-SAVE INJECTION ---
+            const autoSaveScript = `
+                <script>
+                    window.addEventListener('DOMContentLoaded', () => {
+                        const expId = '${experimentId}';
+                        const inputs = document.querySelectorAll('input[id], select[id], textarea[id]');
+                        
+                        inputs.forEach(input => {
+                            // 1. Load saved data
+                            const saved = localStorage.getItem(expId + '_' + input.id);
+                            if (saved !== null) {
+                                input.value = saved;
+                                // Trigger updates
+                                input.dispatchEvent(new Event('input', { bubbles: true }));
+                                input.dispatchEvent(new Event('change', { bubbles: true }));
+                            }
+                            
+                            // 2. Save on every keystroke
+                            input.addEventListener('input', () => {
+                                localStorage.setItem(expId + '_' + input.id, input.value);
+                            });
+                        });
+                    });
+                <\/script>
+            `;
+            
+            // Inject the script right before the closing body tag
+            sourceCode = sourceCode.replace('</body>', autoSaveScript + '</body>');
 
             dashboard.style.display = 'none';
             viewer.style.display = 'flex';
             titleEl.innerText = title;
-            
-            // Inject the code cleanly into the iframe
             iframe.srcdoc = sourceCode;
-        }
-
-        function closeViewer() {
-            const dashboard = document.getElementById('dashboard');
-            const viewer = document.getElementById('viewer');
-            const iframe = document.getElementById('exp-frame');
-
-            viewer.style.display = 'none';
-            dashboard.style.display = 'flex';
-            
-            // Clear iframe memory
-            iframe.srcdoc = '';
         }
 
         // --- NEW THEME TOGGLE LOGIC ---
